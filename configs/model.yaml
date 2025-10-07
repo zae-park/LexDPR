@@ -1,0 +1,11 @@
+
+encoders:
+  query:
+    pretrained_model_name_or_path: "sentence-transformers/all-MiniLM-L6-v2"
+    pooling: "mean"
+  passage:
+    pretrained_model_name_or_path: "sentence-transformers/all-MiniLM-L6-v2"
+    pooling: "mean"
+loss:
+  type: "in_batch_neg"
+similarity: "dot"  # or "cosine"

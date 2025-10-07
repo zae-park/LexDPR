@@ -1,0 +1,21 @@
+
+seed: 42
+device: cuda
+training:
+  batch_size: 16
+  grad_accum: 1
+  learning_rate: 3e-5
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 10000
+  fp16: true
+retrieval:
+  top_k: 20
+index:
+  type: faiss
+  factory_string: "IVF512,Flat"
+  nprobe: 16
+logging:
+  interval: 50
+  eval_interval: 500
+  output_dir: checkpoint

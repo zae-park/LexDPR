@@ -1,0 +1,15 @@
+
+torch
+transformers
+faiss-cpu
+numpy
+scikit-learn
+tqdm
+datasets
+hydra-core
+omegaconf
+pydantic
+ujson
+rich
+sentencepiece
+pyyaml

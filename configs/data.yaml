@@ -1,0 +1,15 @@
+
+paths:
+  statutes_dir: "data/statutes"
+  no_action_letters_dir: "data/no_action_letters"
+  queries_dir: "data/queries"
+  processed_dir: "data/processed"
+schema:
+  # expected JSONL for processed corpus
+  passage_fields: ["id", "text", "meta"]
+  query_fields: ["id", "question", "positive_ids"]
+chunking:
+  unit: "clause"       # or "article", "paragraph"
+  max_tokens: 256
+  stride_tokens: 64
+  section_headers: ["질의요지", "사실관계", "관련 법령", "검토", "결론"]
