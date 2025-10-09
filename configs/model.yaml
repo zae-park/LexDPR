@@ -3,9 +3,9 @@ encoders:
   query:
     pretrained_model_name_or_path: "sentence-transformers/all-MiniLM-L6-v2"
     pooling: "mean"
+    batch_size: 64
   passage:
     pretrained_model_name_or_path: "sentence-transformers/all-MiniLM-L6-v2"
     pooling: "mean"
-loss:
-  type: "in_batch_neg"
-similarity: "dot"  # or "cosine"
+    batch_size: 64
+similarity: "dot"
