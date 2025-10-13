@@ -19,7 +19,7 @@ class DPRDataset(Dataset):
         self.pos_passages = []
         self.neg_passages = []
 
-        with open(data_path, "r") as f:
+        with open(data_path, "r", encoding="utf-8") as f:
             for line in f:
                 item = json.loads(line)
                 q = item["question"]
@@ -165,7 +165,7 @@ def train_epoch(model_q, model_p, dataloader, optimizer, tokenizer, device):
 def load_passage_map(corpus_path):
     """Load passage_id -> text mapping"""
     pmap = {}
-    with open(corpus_path, "r") as f:
+    with open(corpus_path, "r", encoding="utf-8") as f:
         for line in f:
             item = json.loads(line)
             pmap[item["id"]] = item["text"]
