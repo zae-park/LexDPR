@@ -1,7 +1,7 @@
 # 🏛️ LexDPR  
 **구조화되고 계층적인 법령 및 규범 문서를 위한 Dense Passage Retrieval 모델**
 
-LexDPR은 **법령, 규정, 비조치의견서 등과 같은 구조화된 문서**를 대상으로 하는 **Dense Passage Retrieval (DPR)** 연구 프로젝트입니다.  
+LexDPR은 **법령, 규정, 비조치의견서 등과 같은 구조화된 문서**를 대상으로 하는 **Dense Passage Retrieval (DPR)** 모델입니다.  
 조·항·호 단위의 계층적 구조를 가진 문서를 효율적으로 인덱싱하고, 의미적 일관성을 유지하며 검색 성능을 향상시키는 것을 목표로 합니다.
 
 ---
@@ -14,8 +14,7 @@ LexDPR은 **법령, 규정, 비조치의견서 등과 같은 구조화된 문서
 - **법령 문맥 의존성**이 높은 구문 처리의 불안정성  
 - **의미적으로 연결된 문장 간 거리 문제**로 인한 검색 정확도 저하  
 
-LexDPR은 이러한 한계를 보완하기 위해 **법령 문서 구조에 최적화된 Dense Passage Retrieval 파이프라인**을 설계하였으며,  
-**RAG 시스템의 중간 검색기(retriever)** 역할을 수행합니다.
+LexDPR은 **법령 문서 구조에 최적화된 Dense Passage Retrieval 파이프라인**으로, **RAG 시스템의 중간 검색기(retriever)** 역할을 수행합니다.
 
 ---
 
@@ -131,7 +130,7 @@ python scripts/evaluate.py --index_dir index --queries data/queries/queries.json
   author = {박성재},
   title  = {LexDPR: 구조화된 법령 문서를 위한 Dense Passage Retrieval 모델},
   year   = {2025},
-  url    = {https://github.com/supercent-ai/LexDPR}
+  url    = {https://github.com/zae-park/LexDPR}
 }
 ```
 
