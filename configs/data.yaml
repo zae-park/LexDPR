@@ -1,14 +1,9 @@
+# configs/data.yaml
+pairs: output/pairs_train.jsonl
+passages:
+  - output/law_passages.jsonl
+  - output/prec_passages.jsonl
 
-paths:
-  statutes_dir: "data/statutes"
-  no_action_letters_dir: "data/no_action_letters"
-  queries_dir: "data/queries"
-  processed_dir: "data/processed"
-schema:
-  passage_fields: ["id", "text", "meta"]
-  query_fields: ["id", "question", "positive_ids"]
-chunking:
-  unit: "clause"
-  max_chars: 1200
-  stride_chars: 200
-  section_headers: ["질의요지", "사실관계", "관련 법령", "검토", "결론"]
+batches:
+  bi: 64
+  ce: 16

@@ -1,11 +1,20 @@
-
+# configs/base.yaml
 seed: 42
-device: cuda
-retrieval:
-  top_k: 10
-index:
-  type: faiss
-  factory_string: "Flat"
-  nprobe: 16
-output:
-  dir: checkpoint
+mode: bi            # bi (retriever) or ce (reranker)
+out_dir: runs/exp_kosimcse
+
+trainer:
+  epochs: 3
+  lr: 2e-5
+  temperature: 1.0
+  k: 10
+  eval_pairs: null    # e.g., data/pairs_val.jsonl
+  use_amp: true
+
+cross_trainer:
+  epochs: 2
+  lr: 2e-5
+  max_len: 256
+
+logging:
+  log_interval: 50
