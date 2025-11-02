@@ -94,7 +94,28 @@ LexDPR은 RAG 파이프라인의 생성기(generator)와 독립적으로 동작�
 
 ---
 
-## 🚀 사용 예시
+## 사용 예시
+
+```bash
+# 1. 의존성 설치 (Poetry 패키지 매니저)
+poetry init
+poetry install
+
+# 2. Data Fetcher
+poetry run python data/crawler/law_openapi_ingest.py
+
+# 3. Train
+## 3-1. Bi-Encoder 학습
+poetry run python scripts/train_cfg.py
+## 3-2. Cross-Encoder 학습
+poetry run python scripts/train_cfg.py mode=ce 
+
+
+```
+
+
+
+## 🚀 사용 예시 (DEPRECATED)
 
 ```bash
 # 1. 의존성 설치
