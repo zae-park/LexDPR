@@ -1,0 +1,2 @@
+{"query_id": "Q_00001", "query_text": "저축은행이 예금자에게 이자 지급을 거절할 수 있는 요건은?", "positive_passages": ["PREC_67890_1"], "hard_negatives": ["LAW_12345_제12조_2"]}
+{"query_id": "Q_00002", "query_text": "예금계약 해지 시 약정이 없으면 이자 계산 기준은 무엇인가요?", "positive_passages": ["LAW_12345_제12조_1", "PREC_67890_2"], "hard_negatives": ["PREC_67890_1"]}
