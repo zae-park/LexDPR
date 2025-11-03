@@ -1,6 +1,6 @@
 # src/ref/lex_dpr/cli/main.py
 import typer
-from ..train.bi import train_bi
+from ..train.bi_encoder import train_bi
 from ..embed.build_index import build_faiss
 
 app = typer.Typer(add_completion=False)
