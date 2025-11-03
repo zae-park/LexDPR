@@ -20,35 +20,35 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🔗 Mirror to Organization Repo
-        env:
-          # 개인 레포의 Secrets에 등록된 조직 접근 토큰 (Classic PAT)
-          ORG_TOKEN: ${{ secrets.MIRROR_TOKEN }}
-          # 조직 이름/레포 이름. 조직 레포의 경로를 여기에 명시합니다.
-          # 예시: richer4p/LexDPR.git
-          TARGET_REPO_PATH: "richer4p/LexDPR.git" 
-          HOST: "github.com"
+      # - name: 🔗 Mirror to Organization Repo
+      #   env:
+      #     # 개인 레포의 Secrets에 등록된 조직 접근 토큰 (Classic PAT)
+      #     ORG_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+      #     # 조직 이름/레포 이름. 조직 레포의 경로를 여기에 명시합니다.
+      #     # 예시: richer4p/LexDPR.git
+      #     TARGET_REPO_PATH: "richer4p/LexDPR.git" 
+      #     HOST: "github.com"
           
-        run: |
-          # 1. 토큰 환경 변수 검사
-          if [ -z "$ORG_TOKEN" ]; then
-            echo "❌ MIRROR_TOKEN is not set in secrets."
-            exit 1
-          fi
+      #   run: |
+      #     # 1. 토큰 환경 변수 검사
+      #     if [ -z "$ORG_TOKEN" ]; then
+      #       echo "❌ MIRROR_TOKEN is not set in secrets."
+      #       exit 1
+      #     fi
           
-          # 2. 원격 URL 구성 (토큰을 사용하여 HTTPS 인증)
-          # PAT를 비밀번호처럼 사용하여 인증하는 표준 방식입니다.
-          NEW_REMOTE="https://x-access-token:${ORG_TOKEN}@${HOST}/${TARGET_REPO_PATH}"
+      #     # 2. 원격 URL 구성 (토큰을 사용하여 HTTPS 인증)
+      #     # PAT를 비밀번호처럼 사용하여 인증하는 표준 방식입니다.
+      #     NEW_REMOTE="https://x-access-token:${ORG_TOKEN}@${HOST}/${TARGET_REPO_PATH}"
           
-          echo "🎯 Target repository: https://${HOST}/${TARGET_REPO_PATH}"
+      #     echo "🎯 Target repository: https://${HOST}/${TARGET_REPO_PATH}"
           
-          # 3. 원격 저장소 추가
-          # 'org-mirror'라는 이름으로 조직 레포를 원격 저장소로 추가
-          git remote add org-mirror "$NEW_REMOTE"
+      #     # 3. 원격 저장소 추가
+      #     # 'org-mirror'라는 이름으로 조직 레포를 원격 저장소로 추가
+      #     git remote add org-mirror "$NEW_REMOTE"
           
-          # 4. 미러링 푸시 실행
-          echo "🔄 Mirroring all branches and tags..."
-          # '--mirror' 옵션은 모든 브랜치, 태그 등을 덮어씁니다.
-          git push org-mirror --mirror
+      #     # 4. 미러링 푸시 실행
+      #     echo "🔄 Mirroring all branches and tags..."
+      #     # '--mirror' 옵션은 모든 브랜치, 태그 등을 덮어씁니다.
+      #     git push org-mirror --mirror
           
-          echo "✅ Mirroring complete!"
+      #     echo "✅ Mirroring complete!"
