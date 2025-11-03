@@ -12,26 +12,50 @@ jobs:
   mirror_repo:
     runs-on: ubuntu-latest
     
-    env:
-      ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
-      ORG_REPO_URL: "https://github.com/richer4p/LexDPR.git"
-    
     steps:
       - name: 📥 Checkout Source Repository (Full History)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 🔗 Add Target Remote and Push All Refs (Mirror)
+      - name: 🔍 Debug - Check Token
         env:
           ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
-          ORG_REPO_URL: "https://github.com/richer4p/LexDPR.git"
-        if: success() && env.ORG_TOKEN != ''
         run: |
-          REPO_PATH=$(echo $ORG_REPO_URL | sed -e 's|https://||')
-          NEW_REMOTE="https://zae-park:${ORG_TOKEN}@${REPO_PATH}"
+          if [ -z "$ORG_TOKEN" ]; then
+            echo "❌ ORG_TOKEN is empty or not set"
+            exit 1
+          fi
+          echo "✅ ORG_TOKEN is set"
+          echo "Token length: ${#ORG_TOKEN}"
           
-          echo "Target repository: $ORG_REPO_URL"
+          # 토큰 앞 4자리만 표시 (디버깅용)
+          echo "Token prefix: ${ORG_TOKEN:0:4}..."
+
+      - name: 🔗 Test Connection
+        env:
+          ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
+        run: |
+          TARGET_REPO="github.com/richer4p/LexDPR.git"
+          
+          echo "Testing connection to https://${TARGET_REPO}"
+          
+          # ls-remote로 연결 테스트
+          if git ls-remote "https://zae-park:${ORG_TOKEN}@${TARGET_REPO}" > /dev/null 2>&1; then
+            echo "✅ Connection successful"
+          else
+            echo "❌ Connection failed"
+            exit 1
+          fi
+
+      - name: 🔗 Mirror to Organization Repo
+        env:
+          ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
+        run: |
+          TARGET_REPO="github.com/richer4p/LexDPR.git"
+          NEW_REMOTE="https://zae-park:${ORG_TOKEN}@${TARGET_REPO}"
+          
+          echo "Target repository: https://${TARGET_REPO}"
           
           # 원격 저장소 추가
           git remote add org-mirror "$NEW_REMOTE"
