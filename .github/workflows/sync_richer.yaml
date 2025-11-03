@@ -34,7 +34,8 @@ jobs:
         run: |
           # URL에 인증 정보 포함
           NEW_REMOTE="https://${{ github.actor }}:${ORG_TOKEN}@$(echo $ORG_REPO_URL | sed -e 's/https:\/\///')"
-          
+          echo "New remote URL: $NEW_REMOTE"
+
           # 원격 저장소를 별칭(org-mirror) 추가
           git remote add org-mirror "$NEW_REMOTE"
           
