@@ -1,5 +1,5 @@
 # lex_dpr/models/encoders.py
-from typing import Iterable
+from typing import Iterable, Optional
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from .templates import TemplateMode, tq, tp
