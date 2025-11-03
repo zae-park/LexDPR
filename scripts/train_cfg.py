@@ -6,9 +6,7 @@ import math
 import torch
 from torch.utils.data import DataLoader
 from sentence_transformers import SentenceTransformer, InputExample, losses, util
-from sentence_transformers.cross_encoder import CrossEncoder
 from sentence_transformers.evaluation import InformationRetrievalEvaluator
-from sentence_transformers.cross_encoder.evaluation import CEBinaryClassificationEvaluator
 from omegaconf import OmegaConf
 from lex_dpr.utils.io import read_jsonl
 from lex_dpr.data import load_passages
