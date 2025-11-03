@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from sentence_transformers import SentenceTransformer, InputExample, losses, util
 from sentence_transformers.cross_encoder import CrossEncoder
+from sentence_transformers.evaluation import InformationRetrievalEvaluator
 from sentence_transformers.cross_encoder.evaluation import CEBinaryClassificationEvaluator
 from omegaconf import OmegaConf
 
@@ -27,6 +28,43 @@ def set_seed(seed: int = 42):
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+def build_ir_evaluator(passages: dict, eval_pairs_path: str, k_vals=None):
+    # 1) k 리스트 정규화
+    if k_vals is None:
+        k_vals = [1, 3, 5, 10]
+    elif isinstance(k_vals, int):
+        k_vals = [k_vals]
+
+    # 2) corpus / queries / relevant_docs 구성
+    corpus = {pid: row["text"] for pid, row in passages.items()}
+
+    queries, relevant_docs = {}, {}
+    for row in read_jsonl(eval_pairs_path):
+        qid = row.get("query_id") or row["query_text"]
+        queries[qid] = row["query_text"]
+        relevant_docs[qid] = set(row["positive_passages"])
+
+    # 3) 코퍼스 크기에 맞춰 k 잘라내기 (빈 리스트 방지)
+    max_k = max(1, len(corpus))  # 최소 1
+    k_vals = [k for k in k_vals if 1 <= k <= max_k]
+    if not k_vals:
+        k_vals = [1]
+
+    # 4) evaluator 생성 (모든 @k 인자에 비지 않은 리스트 전달)
+    evaluator = InformationRetrievalEvaluator(
+        queries=queries,
+        corpus=corpus,
+        relevant_docs=relevant_docs,
+        mrr_at_k=list(k_vals),
+        ndcg_at_k=list(k_vals),
+        map_at_k=list(k_vals),
+        accuracy_at_k=list(k_vals),         # ★ 빈 리스트 금지
+        precision_recall_at_k=[],           # 원하면 여기도 k_vals 가능
+        show_progress_bar=False,
+        name="val",
+    )
+    return evaluator, k_vals
 
 def eval_recall_at_k(model: SentenceTransformer, passages: Dict[str, dict], eval_pairs_path: str, k: int = 10) -> float:
     eval_pairs = list(read_jsonl(eval_pairs_path))
@@ -65,6 +103,8 @@ def train_bi(cfg):
             neg_texts = [passages[n]["text"] for n in neg_ids if n in passages]
             examples.append(InputExample(texts=[q, p_text] + neg_texts))
     
+    examples *= 128
+    
     n_ex = len(examples)
     if n_ex == 0:
         raise ValueError(
@@ -80,6 +120,11 @@ def train_bi(cfg):
     loader = DataLoader(examples, batch_size=cfg.data.batches.bi, shuffle=True, drop_last=False)
     loss = losses.MultipleNegativesRankingLoss(model, scale=cfg.trainer.temperature)
     
+    evaluator = None
+    if cfg.trainer.eval_pairs:
+        evaluator, _ = build_ir_evaluator(passages, cfg.trainer.eval_pairs, k_vals=cfg.trainer.k_values)
+
+    
     steps_per_epoch = max(1, math.ceil(len(examples) / cfg.data.batches.bi))
     total_steps = steps_per_epoch * cfg.trainer.epochs
     warmup = max(10, int(total_steps * 0.1))
@@ -91,7 +136,9 @@ def train_bi(cfg):
         scheduler="warmupcosine",
         optimizer_params={"lr": cfg.trainer.lr},
         use_amp=bool(cfg.trainer.use_amp),
-        show_progress_bar=True
+        show_progress_bar=True,
+        evaluator=evaluator,                    # ★ 추가
+        evaluation_steps=cfg.trainer.eval_steps # ★ 추가 (예: 500)
     )
 
     os.makedirs(cfg.out_dir, exist_ok=True)
