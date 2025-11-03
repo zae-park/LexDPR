@@ -1,7 +1,6 @@
 name: 🔄 Auto Mirror to Organization Repo
 # RICHER 조직에 mirror
 
-# 트리거 : 모든 브랜치(refs/heads/**) & 모든 태그(refs/tags/**)가 푸시될 때
 on:
   push:
     branches:
@@ -17,7 +16,6 @@ jobs:
       ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
       ORG_REPO_URL: "https://github.com/richer4p/LexDPR.git"
     
-    
     steps:
       - name: 📥 Checkout Source Repository (Full History)
         uses: actions/checkout@v4
@@ -28,18 +26,17 @@ jobs:
         env:
           ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
           ORG_REPO_URL: "https://github.com/richer4p/LexDPR.git"
-
         if: success() && env.ORG_TOKEN != ''
-        
         run: |
-          # URL에 인증 정보 포함
-          NEW_REMOTE="https://zae-park:${ORG_TOKEN}@$(echo $ORG_REPO_URL | sed -e 's/https:\/\///')"
-          echo "New remote URL: $NEW_REMOTE"
-
-          # 원격 저장소를 별칭(org-mirror) 추가
+          REPO_PATH=$(echo $ORG_REPO_URL | sed -e 's|https://||')
+          NEW_REMOTE="https://zae-park:${ORG_TOKEN}@${REPO_PATH}"
+          
+          echo "Target repository: $ORG_REPO_URL"
+          
+          # 원격 저장소 추가
           git remote add org-mirror "$NEW_REMOTE"
           
-          # 3. 미러링 푸시
-          echo "Mirroring all branches and tags to $ORG_REPO_URL..."
+          # 미러링 푸시
+          echo "Mirroring all branches and tags..."
           git push org-mirror --mirror
-          echo "Mirroring complete."
+          echo "✅ Mirroring complete."
