@@ -17,55 +17,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🔍 Verify Token
-        env:
-          ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
-        run: |
-          if [ -z "$ORG_TOKEN" ]; then
-            echo "❌ ORG_REPO_TOKEN is not set"
-            echo "Please add the token to repository secrets"
-            exit 1
-          fi
-          echo "✅ Token is set (length: ${#ORG_TOKEN})"
-
-      - name: 🔗 Test Repository Access
-        env:
-          ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
-        run: |
-          TARGET_REPO="github.com/richer4p/LexDPR.git"
-          
-          echo "Testing access to https://${TARGET_REPO}"
-          
-          # 상세한 에러 출력
-          if ! git ls-remote "https://zae-park:${ORG_TOKEN}@${TARGET_REPO}" 2>&1; then
-            echo ""
-            echo "❌ Failed to access repository"
-            echo ""
-            echo "Possible causes:"
-            echo "1. Token doesn't have 'repo' scope"
-            echo "2. Token expired or invalid"
-            echo "3. Repository doesn't exist or is private without access"
-            echo "4. Username 'zae-park' is incorrect"
-            echo ""
-            echo "Please verify:"
-            echo "- Token has full 'repo' permissions"
-            echo "- Token is not expired"
-            echo "- Repository exists: https://${TARGET_REPO}"
-            exit 1
-          fi
-          
-          echo "✅ Repository access successful"
-
       - name: 🔗 Mirror to Organization Repo
         env:
           ORG_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
         run: |
+          # 토큰 확인
+          if [ -z "$ORG_TOKEN" ]; then
+            echo "❌ ORG_REPO_TOKEN is not set"
+            exit 1
+          fi
+          
+          # 타겟 저장소 설정
           TARGET_REPO="github.com/richer4p/LexDPR.git"
           NEW_REMOTE="https://zae-park:${ORG_TOKEN}@${TARGET_REPO}"
           
-          echo "Mirroring to: https://${TARGET_REPO}"
+          echo "🎯 Target repository: https://${TARGET_REPO}"
           
+          # 원격 저장소 추가
           git remote add org-mirror "$NEW_REMOTE"
+          
+          # 미러링 푸시 (모든 브랜치와 태그, 커밋 작성자 정보 유지)
+          echo "🔄 Mirroring all branches and tags..."
           git push org-mirror --mirror
           
-          echo "✅ Mirroring complete"
+          echo "✅ Mirroring complete!"
