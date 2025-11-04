@@ -1,10 +1,10 @@
 # `lex_dpr/data_processing` – Legal Data Pre-processing Pipeline
 
-> 목적: **법령·판례 원시 JSON 데이터를 Sentence-Transformers 파인튜닝에 적합한 형식(`law_passages.jsonl`, `pairs_train.jsonl`)으로 변환**한다.
+> **법령·판례 원시 JSON 데이터를 Sentence-Transformers 파인튜닝에 적합한 형식(`law_passages.jsonl`, `pairs_train.jsonl`)으로 변환**
 
 ---
 
-## 📁 디렉토리 구조 제안
+## 📁 디렉토리 구조
 
 ```
 lex_dpr/data_processing/
@@ -21,7 +21,7 @@ lex_dpr/data_processing/
 
 ---
 
-## 🎯 설계 목표
+## 🎯 목표
 
 | 목표                               | 설명                                                                      |
 | -------------------------------- | ----------------------------------------------------------------------- |
