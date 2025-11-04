@@ -1,19 +1,32 @@
+# lex_dpr/data_processing/filters.py
+
 import re, unicodedata
+from typing import Any
 
 _DELETED_PAT = re.compile(r"(삭제\s*됨?|^\s*\(삭제\)\s*$)", re.IGNORECASE)
 
-def is_deleted_clause(text: str | None) -> bool:
-    if not text:
-        return True  # 빈 본문은 노이즈로 취급
-    t = normalize_whitespace(text)
-    return bool(_DELETED_PAT.search(t)) or t.strip() in {"삭제", "(삭제)"}
-
-def normalize_whitespace(text: str) -> str:
-    if text is None:
+def _coerce_to_str(x: Any) -> str:
+    if x is None:
         return ""
-    t = unicodedata.normalize("NFKC", text)
-    t = re.sub(r"\s+", " ", t)
-    return t.strip()
+    if isinstance(x, str):
+        return x
+    if isinstance(x, list):
+        # 문자열만 취해 합치기
+        return " ".join([s for s in x if isinstance(s, str)])
+    # dict 등 기타 타입은 일단 비움(원하면 여기서 키 추출 로직 추가)
+    return ""
+
+def is_deleted_clause(text: Any) -> bool:
+    t = normalize_whitespace(text)
+    return (t == "" or bool(_DELETED_PAT.search(t)) or t.strip() in {"삭제", "(삭제)"})
+
+def normalize_whitespace(text: Any) -> str:
+    s = _coerce_to_str(text)
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKC", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
 
 def dedup_texts(items: list[dict], text_key: str = "text") -> list[dict]:
     seen = set()
