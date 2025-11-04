@@ -1,6 +1,6 @@
 # `lex_dpr/data_processing` – Legal Data Pre-processing Pipeline
 
-> **법령·판례 원시 JSON 데이터를 Sentence-Transformers 파인튜닝에 적합한 형식(`law_passages.jsonl`, `pairs_train.jsonl`)으로 변환**
+> 목적: **법령·판례 원시 JSON 데이터를 Sentence-Transformers 파인튜닝에 적합한 형식(`law_passages.jsonl`, `pairs_train.jsonl`)으로 변환**한다.
 
 ---
 
@@ -9,7 +9,7 @@
 ```
 lex_dpr/data_processing/
 ├─ __init__.py
-├─ README.md                  # ← 본 파일
+├─ README.md
 ├─ preprocess_law.py          # 법령 JSON(조문 트리) → passage JSONL
 ├─ preprocess_prec.py         # 판례 JSON → passage JSONL
 ├─ make_pairs.py              # 질의-패시지 쌍(pair_train.jsonl) 생성
@@ -21,7 +21,7 @@ lex_dpr/data_processing/
 
 ---
 
-## 🎯 목표
+## 🎯 설계 목표
 
 | 목표                               | 설명                                                                      |
 | -------------------------------- | ----------------------------------------------------------------------- |
@@ -36,9 +36,9 @@ lex_dpr/data_processing/
 
 ## 🧩 주요 컴포넌트 설명
 
-### 1️⃣ `preprocess_law.py` – 법령 조문 트리 평탄화
+### 1️⃣ `preprocess_law.py` – 법령 JSON 평탄화
 
-입력: law.go.kr 원본(조문/항/호 트리 JSON)
+입력: law.go.kr 원본(조문 트리 JSON)
 출력: `law_passages.jsonl`
 
 **핵심 기능**
@@ -50,6 +50,30 @@ lex_dpr/data_processing/
   `LAW_<법령ID>_제{조문번호}조_[항번호]_[호번호]`
 * `text` 결합 규칙(항/호 단위 세분화 우선)
 * 메타 정보(`law_id`, `law_name`, `article`, `effective_date`) 유지
+
+#### 📂 구조 예시 (law.go.kr JSON 트리)
+
+```
+법령
+ ├── 기본정보
+ │    ├── 법령ID: "000030"
+ │    └── 법령명_한글: "정보통신망 이용촉진 및 정보보호 등에 관한 법률"
+ └── 조문
+      ├── 조문단위[0]
+      │    ├── 조문번호: "1"
+      │    ├── 조문내용: "제1장 총칙"
+      │    └── 항: [ { 항번호: "1", 항내용: "..." }, { 항번호: "2", 항내용: "..." } ]
+      └── 조문단위[1]
+           ├── 조문번호: "2"
+           ├── 조문내용: "제2조(정의) ..."
+           └── 항: ...
+```
+
+**출력 예시**
+
+```json
+{"id": "LAW_000030_제1조_1", "parent_id": "LAW_000030_제1조", "type": "법령", "law_id": "000030", "law_name": "정보통신망 이용촉진 및 정보보호 등에 관한 법률", "article": "제1조", "effective_date": "20251001", "text": "제1조(목적) 이 법은..."}
+```
 
 ---
 
@@ -65,32 +89,56 @@ lex_dpr/data_processing/
 * `id` 규칙: `PREC_<판례ID>_<n>`
 * 짧은 조각/중복 텍스트 제거
 
+#### 📂 구조 예시 (판례 JSON)
+
+```
+판례
+ ├── 판례일련번호: "2020다12345"
+ ├── 사건명: "예금이자 지급거절 사건"
+ ├── 사건번호: "2015다12345"
+ ├── 법원명: "대법원"
+ ├── 판결요지: "예금계약 해지 시..."
+ └── 판결본문: "피고 저축은행은..."
+```
+
+**출력 예시**
+
+```json
+{"id": "PREC_2020da12345_1", "parent_id": "PREC_2020da12345", "type": "판례", "case_number": "2015다12345", "court_name": "대법원", "judgment_date": "2015-12-03", "title": "예금이자 지급거절 사건", "text": "피고 저축은행은 원고와 예금계약을..."}
+```
+
 ---
 
-### 3️⃣ `filters.py` – 노이즈 정리 모듈
+### 3️⃣ `filters.py` – 노이즈 정리
 
-* `is_deleted_clause(text)` : “삭제”, “삭제됨”, “(삭제)” 등 패턴 감지
-* `normalize_whitespace(text)` : 유니코드/공백 정규화
+* `is_deleted_clause(text)` : “삭제”, “삭제됨”, “(삭제)” 등 필터링
+* `normalize_whitespace(text)` : 유니코드 정규화 및 공백 통합
 * `dedup_texts(passages)` : 동일 `text` 중복 제거
 
 ---
 
-### 4️⃣ `make_pairs.py` – 학습용 query-passage 쌍 생성
+### 4️⃣ `make_pairs.py` – 질의–패시지 쌍 생성
 
 입력: `law_passages.jsonl`, `prec_passages.jsonl`
 출력: `pairs_train.jsonl`
 
 **생성 전략**
 
-* (약지도) 조문/판례 제목(`title`/`headnote`)을 query로, 본문을 positive로
+* 조문/판례 제목(`title`/`headnote`)을 query로, 본문을 positive로
 * Hard negative: 같은 주제 태그지만 다른 문서, 동일 키워드 포함 오답
+
+**출력 예시**
+
+```json
+{"query_id": "Q_00001", "query_text": "예금보험공사 업무범위", "positive_passages": ["LAW_000030_제41조_1"], "hard_negatives": ["LAW_000030_제42조_1"]}
+```
 
 ---
 
 ### 5️⃣ `merge_corpus.py`
 
-* 두 passage 파일 병합 → `merged_corpus.jsonl`
-* 중복 id 검사 및 로그 출력
+법령/판례 passage 병합 → `merged_corpus.jsonl` 생성.
+중복 id 검사 및 병합 로그 출력.
 
 ---
 
@@ -101,7 +149,7 @@ lex_dpr/data_processing/
 
 ---
 
-## ⚙️ 전체 워크플로우 예시
+## ⚙️ 실행 예시
 
 ```bash
 # 1. 법령 전처리
@@ -140,6 +188,48 @@ poetry run python -m lex_dpr.data_processing.validate_dataset \
 * `조문시행일자` 최신만 사용
 * 템플릿(BGE/NONE) 규칙은 학습/평가/서빙에서 일관하게 유지
 * 학습 전 `validate_dataset.py`로 id 정합성 검증
+
+---
+
+## 🔍 추가 데이터 구조 예시
+
+### 법령 포맷 A (일반)
+
+```
+{
+  "법령ID": "000030",
+  "법령명": "정보통신망법",
+  "조문": [
+    {"조문번호": "1", "조문내용": "제1조(목적)...", "항": []},
+    {"조문번호": "2", "조문내용": "제2조(정의)..."}
+  ]
+}
+```
+
+### 법령 포맷 B (중첩)
+
+```
+{
+  "법령": {
+    "기본정보": {"법령ID": "000030", "법령명_한글": "정보통신망법"},
+    "조문": {"조문단위": [ {"조문번호": "1", "조문내용": "...", "항": [...] } ] }
+  }
+}
+```
+
+### 판례 포맷 예시
+
+```
+{
+  "판례일련번호": "2020다12345",
+  "사건명": "예금이자 지급거절 사건",
+  "법원명": "대법원",
+  "판결요지": "...",
+  "판결본문": "..."
+}
+```
+
+이처럼 서로 다른 스키마를 모두 `_extract_law_fields()`와 `coerce_text()` 로 통합 분석하여 동일한 학습 포맷으로 평탄화합니다.
 
 ---
 
