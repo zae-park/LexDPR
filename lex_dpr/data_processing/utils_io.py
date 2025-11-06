@@ -26,3 +26,20 @@ def write_jsonl(path: PathLike, rows: Iterable[Dict[str, Any]]) -> None:
     with opener(p, "wt", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+def append_jsonl(path: PathLike, rows: Iterable[Dict[str, Any]]) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # gzip append 지원 간단화: .gz면 통짜 다시 써야 하므로 여기선 일반 .jsonl만 append 권장
+    if p.suffix == ".gz":
+        raise ValueError("append_jsonl does not support .gz; use .jsonl")
+    with open(p, "a", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+def write_or_append_jsonl(path: PathLike, rows: Iterable[Dict[str, Any]], append: bool=False) -> None:
+    if append:
+        append_jsonl(path, rows)
+    else:
+        from .utils_io import write_jsonl  # reuse existing
+        write_jsonl(path, rows)

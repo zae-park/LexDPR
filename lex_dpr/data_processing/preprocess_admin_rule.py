@@ -141,7 +141,7 @@ def iter_appendices(appx_any: Any, rule_id: str) -> Iterator[Dict[str, Any]]:
 # ─────────────────────────────
 # 메인 변환
 # ─────────────────────────────
-def preprocess_admin_rule(js: Json) -> List[Dict[str, Any]]:
+def admin_rule_iter_to_passages(js: Json) -> List[Dict[str, Any]]:
     svc = js.get("AdmRulService") or {}
     info = svc.get("행정규칙기본정보") or {}
 
@@ -186,7 +186,7 @@ def main():
     args = ap.parse_args()
 
     js = read_json(args.src)
-    rows = preprocess_admin_rule(js)
+    rows = admin_rule_iter_to_passages(js)
     write_jsonl(args.out, rows)
     print(f"[preprocess_admin_rule] passages: {len(rows)} → {args.out}")
 

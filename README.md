@@ -207,3 +207,10 @@ python scripts/evaluate.py --index_dir index --queries data/queries/queries.json
 
 MIT License  
 공공데이터(예: 비조치의견서, 법령 DB)는 각 출처의 오픈라이선스 정책을 반드시 준수해야 합니다.
+
+
+###
+- https://www.law.go.kr/DRF/lawSearch.do?OC=hanwhasbank01&target=prec&type=HTML&&query=
+- https://www.law.go.kr/DRF/lawSearch.do?query=*&target=fsc&OC=hanwhasbank01&search=2&display=20&nw=1&page=2&refAdr=law.go.kr&type=HTML&popYn=N
+
+### 

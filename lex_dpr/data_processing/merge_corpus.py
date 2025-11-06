@@ -4,14 +4,14 @@ from .utils_io import read_jsonl, write_jsonl
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--law", required=False, help="law_passages.jsonl")
-    ap.add_argument("--prec", required=False, help="prec_passages.jsonl")
+    ap.add_argument("--law", required=False, help="data/processed/law_passages.jsonl")
+    ap.add_argument("--admin", required=False, help="data/processed/admin_passages.jsonl")
     ap.add_argument("--out", required=True, help="merged_corpus.jsonl")
     args = ap.parse_args()
 
     ids = set()
     merged = []
-    for path in [args.law, args.prec]:
+    for path in [args.law, args.admin]:
         if not path: continue
         for row in read_jsonl(path):
             if row["id"] in ids:

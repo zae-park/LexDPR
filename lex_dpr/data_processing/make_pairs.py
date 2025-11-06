@@ -18,6 +18,23 @@ def prec_title_query(p: Dict[str, Any]) -> str:
         return f"{title}의 요지는 무엇인가?"
     return "이 판례의 요지는 무엇인가?"
 
+def admin_query_for_rule(p):
+    # 조문 passage
+    rule = p.get("rule_name","")
+    article = p.get("article","")
+    title = p.get("title","")
+    if article:
+        if title:
+            return f"{rule} {article}({title})의 내용은 무엇인가?"
+        return f"{rule} {article}의 내용은 무엇인가?"
+    # 별표 passage
+    annex = p.get("annex_title") or p.get("appendix_title") or ""
+    if annex:
+        return f"{rule}의 '{annex}' 별표 내용은 무엇인가?"
+    # fallback
+    return f"{rule} 관련 내용은 무엇인가?"
+
+
 def make_pairs(law_path: str, prec_path: str, out_path: str, hn_per_q: int = 2) -> None:
     law = list(read_jsonl(law_path)) if law_path else []
     prec = list(read_jsonl(prec_path)) if prec_path else []
