@@ -7,6 +7,9 @@ poetry run python -m lex_dpr.data_processing.preprocess_auto --src-dir data/admi
 poetry run python -m lex_dpr.data_processing.preprocess_auto   --src-dir data/laws   --out-law data/processed/law_passages.jsonl   --glob "**/*.json"
 poetry run python -m lex_dpr.data_processing.merge_corpus   --law   data/processed/law_passages.jsonl   --admin data/processed/admin_passages.jsonl   --out   data/processed/merged_corpus.jsonl
 
+poetry run python -m lex_dpr.data_processing.make_pairs --law   data/processed/law_passages.jsonl --admin data/processed/admin_passages.jsonl --out   data/processed/pairs_train.jsonl
+# poetry run python -m lex_dpr.data_processing.make_pairs --law   data/processed/law_passages.jsonl --admin data/processed/admin_passages.jsonl --prec  data/processed/prec_passages.jsonl --out   data/processed/pairs_train.jsonl
+
 
 echo "[2/5] 전처리: no_action_letters 병합"
 python scripts/preprocess_acts.py --input data/no_action_letters --output data/processed/tmp.jsonl
