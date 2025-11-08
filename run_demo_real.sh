@@ -7,6 +7,8 @@ poetry run python -m lex_dpr.data_processing.preprocess_auto --src-dir data/admi
 poetry run python -m lex_dpr.data_processing.preprocess_auto   --src-dir data/laws   --out-law data/processed/law_passages.jsonl   --glob "**/*.json"
 poetry run python -m lex_dpr.data_processing.merge_corpus   --law   data/processed/law_passages.jsonl   --admin data/processed/admin_passages.jsonl   --out   data/processed/merged_corpus.jsonl
 
+python data/crawler/crawl_precedents.py --output data/precedents --max-workers 8 --delay 0.5    # 워커 수(default 4) 지연 시간 조절
+
 poetry run python -m lex_dpr.data_processing.make_pairs --law   data/processed/law_passages.jsonl --admin data/processed/admin_passages.jsonl --out   data/processed/pairs_train.jsonl
 # poetry run python -m lex_dpr.data_processing.make_pairs --law   data/processed/law_passages.jsonl --admin data/processed/admin_passages.jsonl --prec  data/processed/prec_passages.jsonl --out   data/processed/pairs_train.jsonl
 
