@@ -1,6 +1,6 @@
 # lex_dpr/data_processing/make_pairs.py
 from __future__ import annotations
-import argparse, random, re
+import argparse, json, random, re
 from typing import Dict, Any, List, Optional, Tuple
 from .utils_io import read_jsonl, write_jsonl
 
@@ -17,6 +17,63 @@ def _short(s: Optional[str], n: int = 80) -> str:
 
 def _valid_passage(p: Dict[str, Any], min_len: int = 50) -> bool:
     return len((p.get("text") or "").strip()) >= min_len
+
+
+# =========================
+# Reference law parsing (참조조문 파싱)
+# =========================
+def parse_reference_laws(ref_law_text: str) -> List[Dict[str, Any]]:
+    """
+    참조조문 문자열에서 법령명, 조문번호, 의조번호, 항번호를 추출.
+    
+    입력 예시:
+        "[1]형법 제355조 제1항,제356조 / [2]형법 제30조,제32조,특정경제범죄 가중처벌 등에 관한 법률 제3조 제1항"
+    
+    출력 예시:
+        [
+            {"law_name": "형법", "article_num": "355", "sub_article": None, "paragraph": "1"},
+            {"law_name": "형법", "article_num": "356", "sub_article": None, "paragraph": None},
+            {"law_name": "형법", "article_num": "30", "sub_article": None, "paragraph": None},
+            {"law_name": "특정경제범죄 가중처벌 등에 관한 법률", "article_num": "3", "sub_article": None, "paragraph": "1"},
+        ]
+    """
+    if not ref_law_text or not ref_law_text.strip():
+        return []
+    
+    # HTML 태그 제거
+    ref_law_text = re.sub(r'<br/?>', ' ', ref_law_text)
+    ref_law_text = re.sub(r'<[^>]+>', '', ref_law_text)
+    
+    # 법령명+조문번호 추출 정규식
+    # 법령명: 한글+영문+숫자+특수문자(·)로 구성, 끝에 "법" 또는 "법률"
+    # 조문: 제? 숫자 조
+    # 의조: 의 숫자 (선택)
+    # 항: 제? 숫자 항 (선택)
+    law_pattern = r'([가-힣A-Za-z0-9·\s]+(?:법|법률))\s*제?\s*([0-9]+)\s*조(?:\s*의\s*([0-9]+))?(?:\s*제?\s*([0-9]+)\s*항)?'
+    
+    law_refs: List[Dict[str, Any]] = []
+    seen = set()  # 중복 제거용
+    
+    for m in re.finditer(law_pattern, ref_law_text):
+        law_name = m.group(1).strip()
+        article_num = m.group(2)
+        sub_article = m.group(3) if m.group(3) else None
+        paragraph = m.group(4) if m.group(4) else None
+        
+        # 중복 제거: (법령명, 조문번호, 의조번호, 항번호) 튜플로 비교
+        key = (law_name, article_num, sub_article, paragraph)
+        if key in seen:
+            continue
+        seen.add(key)
+        
+        law_refs.append({
+            'law_name': law_name,
+            'article_num': article_num,
+            'sub_article': sub_article,
+            'paragraph': paragraph,
+        })
+    
+    return law_refs
 
 
 # =========================
@@ -47,6 +104,7 @@ def build_query_admin(p: Dict[str, Any]) -> str:
     return f"{rule} 관련 내용은 무엇인가?"
 
 def build_query_prec(p: Dict[str, Any]) -> str:
+    """판례 passage에서 질의 생성 (기존 함수 - 판례 passage용)"""
     title = (p.get("title") or "").strip()
     if title:
         return f"{_one_line(title, 120)}의 요지는 무엇인가?"
@@ -54,6 +112,71 @@ def build_query_prec(p: Dict[str, Any]) -> str:
     hs = (p.get("headnote") or p.get("summary") or "").strip()
     hs = _one_line(hs, 120)
     return f"{hs}의 요지는 무엇인가?" if hs else "이 판례의 요지는 무엇인가?"
+
+def build_query_from_precedent_json(prec_json: Dict[str, Any]) -> Optional[str]:
+    """
+    판례 원본 JSON에서 질의 생성.
+    
+    전략:
+    1. 우선순위 1: 판시사항 (법적 쟁점이 명확)
+    2. 우선순위 2: 판결요지 요약 (사건+판결)
+    3. 우선순위 3: 사건명 기반 질의
+    
+    Args:
+        prec_json: 판례 원본 JSON (판시사항, 판결요지, 사건명 필드 포함)
+    
+    Returns:
+        생성된 질의 문자열 또는 None
+    """
+    def clean_html(text: str) -> str:
+        """HTML 태그 제거 및 공백 정규화"""
+        if not text:
+            return ""
+        text = re.sub(r'<br/?>', ' ', text)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+    
+    def extract_first_section(text: str) -> str:
+        """[번호]로 구분된 첫 번째 섹션 추출"""
+        if not text:
+            return ""
+        sections = re.split(r'\[(\d+)\]', text)
+        if len(sections) > 2:
+            # 첫 번째 섹션 내용 (인덱스 2)
+            first_content = sections[2].strip()
+            # 너무 길면 자르기
+            if len(first_content) > 200:
+                first_content = first_content[:200] + "..."
+            return first_content
+        return text.strip()[:200] if text else ""
+    
+    # 전략 1: 판시사항 사용
+    headnote = clean_html(prec_json.get("판시사항") or prec_json.get("headnote") or "")
+    if headnote:
+        first_headnote = extract_first_section(headnote)
+        if first_headnote:
+            # 질의 형식: "법적 쟁점에 대한 법적 판단은?"
+            query = f"{first_headnote}에 대한 법적 판단은?"
+            return _one_line(query, 200)
+    
+    # 전략 2: 판결요지 사용
+    summary = clean_html(prec_json.get("판결요지") or prec_json.get("summary") or "")
+    if summary:
+        first_summary = extract_first_section(summary)
+        if first_summary:
+            # 질의 형식: "사건 내용에 대한 법적 근거는?"
+            query = f"{first_summary}에 대한 법적 근거는?"
+            return _one_line(query, 200)
+    
+    # 전략 3: 사건명 사용
+    title = (prec_json.get("사건명") or prec_json.get("title") or "").strip()
+    if title:
+        title_short = _one_line(title, 100)
+        query = f"{title_short}에 적용되는 법령은?"
+        return query
+    
+    return None
 
 
 # =========================
@@ -150,6 +273,10 @@ def build_pairs_from_admin(admin: List[Dict[str, Any]], hn_per_q: int) -> List[D
     return rows
 
 def build_pairs_from_prec(prec: List[Dict[str, Any]], hn_per_q: int) -> List[Dict[str, Any]]:
+    """
+    판례 passage에서 질의-판례 쌍 생성 (기존 방식).
+    판례 passage 자체를 positive로 사용.
+    """
     rows: List[Dict[str, Any]] = []
     prec = [p for p in prec if _valid_passage(p)]
     for p in prec:
@@ -176,6 +303,61 @@ def build_pairs_from_prec(prec: List[Dict[str, Any]], hn_per_q: int) -> List[Dic
         })
     return rows
 
+def build_pairs_from_precedent_jsons(
+    prec_json_dir: str,
+    law_passages: List[Dict[str, Any]],
+    max_positives: int = 5,
+    hn_per_q: int = 2,
+    glob_pattern: str = "**/*.json",
+) -> List[Dict[str, Any]]:
+    """
+    판례 원본 JSON 파일들에서 질의-법령 쌍 생성 (새로운 방식).
+    판례의 사건 내용을 질의로, 참조조문의 법령을 positive로 사용.
+    
+    Args:
+        prec_json_dir: 판례 원본 JSON 파일들이 있는 디렉토리
+        law_passages: 모든 법령 passage 리스트
+        max_positives: 최대 positive passage 개수
+        hn_per_q: 질의당 hard negative 개수
+        glob_pattern: 파일 검색 패턴
+    
+    Returns:
+        질의-법령 쌍 리스트
+    """
+    from pathlib import Path
+    
+    p = Path(prec_json_dir)
+    if not p.exists():
+        return []
+    
+    # 법령 인덱스 생성
+    law_index = build_law_index(law_passages)
+    
+    rows: List[Dict[str, Any]] = []
+    files = sorted(p.glob(glob_pattern))
+    
+    for fp in files:
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                prec_json = json.load(f)
+            
+            # 질의-법령 쌍 생성
+            pair = build_pair_from_precedent_json(
+                prec_json,
+                law_index,
+                law_passages,
+                max_positives=max_positives,
+                hn_per_q=hn_per_q,
+            )
+            
+            if pair:
+                rows.append(pair)
+        except Exception as e:
+            print(f"[warn] skip {fp}: {e}")
+            continue
+    
+    return rows
+
 
 # =========================
 # Cross-type positives (prec → law)
@@ -188,6 +370,7 @@ LAW_MENTION = re.compile(
 )
 
 def _law_index_by_name(law_passages: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """법령명으로 인덱싱 (기존 함수 - cross positive용)"""
     by_name: Dict[str, List[Dict[str, Any]]] = {}
     for lp in law_passages:
         name = (lp.get("law_name") or "").strip()
@@ -195,6 +378,286 @@ def _law_index_by_name(law_passages: List[Dict[str, Any]]) -> Dict[str, List[Dic
             continue
         by_name.setdefault(name, []).append(lp)
     return by_name
+
+def build_law_index(law_passages: List[Dict[str, Any]]) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    """
+    법령 passage를 법령명+조문번호로 인덱싱.
+    
+    반환 구조:
+    {
+        "형법": {
+            "355": [passage1, passage2, ...],  # 제355조 관련 passages
+            "356": [...],
+        },
+        "특정경제범죄 가중처벌 등에 관한 법률": {
+            "3": [...],
+            "8": [...],
+        }
+    }
+    
+    article 필드에서 조문번호 추출:
+    - "제355조" → "355"
+    - "제355조의2" → "355" (의조는 무시하고 메인 조문번호만 사용)
+    """
+    index: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    
+    for lp in law_passages:
+        law_name = (lp.get("law_name") or "").strip()
+        article = (lp.get("article") or "").strip()
+        
+        if not law_name or not article:
+            continue
+        
+        # article에서 조문번호 추출: "제355조" → "355", "제355조의2" → "355"
+        article_match = re.search(r'제\s*([0-9]+)\s*조', article)
+        if not article_match:
+            continue
+        
+        article_num = article_match.group(1)
+        
+        # 인덱스 구조 생성
+        if law_name not in index:
+            index[law_name] = {}
+        if article_num not in index[law_name]:
+            index[law_name][article_num] = []
+        
+        index[law_name][article_num].append(lp)
+    
+    return index
+
+def find_law_passages(
+    index: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    law_name: str,
+    article_num: str,
+    sub_article: Optional[str] = None,
+    paragraph: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    인덱스에서 법령 passage 검색.
+    
+    Args:
+        index: build_law_index()로 생성한 인덱스
+        law_name: 법령명
+        article_num: 조문번호 (문자열)
+        sub_article: 의조번호 (선택, 현재는 무시)
+        paragraph: 항번호 (선택, 현재는 무시)
+    
+    Returns:
+        매칭된 passage 리스트
+    """
+    if law_name not in index:
+        return []
+    
+    if article_num not in index[law_name]:
+        return []
+    
+    # 현재는 조문번호만으로 매칭 (항번호, 의조번호는 나중에 정밀화 가능)
+    passages = index[law_name][article_num]
+    
+    # 항번호가 지정된 경우 필터링 (선택적)
+    if paragraph:
+        filtered = [p for p in passages if paragraph in (p.get("id") or "")]
+        if filtered:
+            return filtered
+    
+    return passages
+
+def build_pair_from_precedent_json(
+    prec_json: Dict[str, Any],
+    law_index: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    all_law_passages: List[Dict[str, Any]],
+    max_positives: int = 5,
+    hn_per_q: int = 2,
+) -> Optional[Dict[str, Any]]:
+    """
+    판례 원본 JSON에서 질의-법령 쌍 생성.
+    
+    Args:
+        prec_json: 판례 원본 JSON
+        law_index: build_law_index()로 생성한 법령 인덱스
+        max_positives: 최대 positive passage 개수
+    
+    Returns:
+        {
+            "query_text": "...",
+            "positive_passages": ["LAW_...", ...],
+            "meta": {...}
+        } 또는 None (질의 생성 실패 또는 매칭된 법령 없음)
+    """
+    # 1. 질의 생성
+    query_text = build_query_from_precedent_json(prec_json)
+    if not query_text:
+        return None
+    
+    # 2. 참조조문 파싱
+    ref_law_text = prec_json.get("참조조문") or prec_json.get("ref_law") or ""
+    law_refs = parse_reference_laws(ref_law_text)
+    
+    if not law_refs:
+        return None
+    
+    # 3. 법령 인덱스에서 passage 검색
+    positive_ids: List[str] = []
+    seen_ids = set()
+    
+    for law_ref in law_refs:
+        law_name = law_ref["law_name"]
+        article_num = law_ref["article_num"]
+        sub_article = law_ref.get("sub_article")
+        paragraph = law_ref.get("paragraph")
+        
+        # 인덱스에서 검색
+        passages = find_law_passages(law_index, law_name, article_num, sub_article, paragraph)
+        
+        for passage in passages:
+            passage_id = passage.get("id")
+            if passage_id and passage_id not in seen_ids:
+                positive_ids.append(passage_id)
+                seen_ids.add(passage_id)
+                
+                # 최대 개수 제한
+                if len(positive_ids) >= max_positives:
+                    break
+        
+        if len(positive_ids) >= max_positives:
+            break
+    
+    # positive passage가 없으면 None 반환
+    if not positive_ids:
+        return None
+    
+    # 4. Hard negative 샘플링
+    hard_negatives = sample_hard_negatives_for_prec_law_pair(
+        positive_ids,
+        law_refs,
+        law_index,
+        all_law_passages,
+        n=hn_per_q,
+    )
+    
+    # 5. 메타데이터 구성
+    case_id = str(prec_json.get("판례일련번호") or prec_json.get("case_id") or "").zfill(6)
+    case_number = prec_json.get("사건번호") or prec_json.get("case_number") or ""
+    court_name = prec_json.get("법원명") or prec_json.get("court_name") or ""
+    
+    return {
+        "query_text": query_text,
+        "positive_passages": positive_ids,
+        "hard_negatives": hard_negatives,
+        "meta": {
+            "type": "prec_to_law",
+            "precedent_id": case_id,
+            "case_number": case_number,
+            "court_name": court_name,
+            "matched_laws": len(law_refs),
+            "matched_passages": len(positive_ids),
+        }
+    }
+
+def sample_hard_negatives_for_prec_law_pair(
+    positive_passages: List[str],
+    law_refs: List[Dict[str, Any]],
+    law_index: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    all_law_passages: List[Dict[str, Any]],
+    n: int = 2,
+) -> List[str]:
+    """
+    판례→법령 쌍에 대한 hard negative 샘플링.
+    
+    전략:
+    1. 같은 법령의 다른 조문에서 우선 샘플링
+    2. 부족하면 다른 법령에서 랜덤 샘플링
+    3. positive passage는 제외
+    
+    Args:
+        positive_passages: positive로 선택된 passage ID 리스트
+        law_refs: 참조조문에서 파싱한 법령 리스트
+        law_index: build_law_index()로 생성한 법령 인덱스
+        all_law_passages: 모든 법령 passage 리스트
+        n: 샘플링할 hard negative 개수
+    
+    Returns:
+        hard negative passage ID 리스트
+    """
+    if n <= 0:
+        return []
+    
+    positive_set = set(positive_passages)
+    hard_negatives: List[str] = []
+    seen_hn = set()
+    
+    # 전략 1: 같은 법령의 다른 조문에서 샘플링
+    for law_ref in law_refs:
+        law_name = law_ref["law_name"]
+        article_num = law_ref["article_num"]
+        
+        if law_name not in law_index:
+            continue
+        
+        # 같은 법령의 다른 조문들 찾기
+        other_articles = [
+            art_num for art_num in law_index[law_name].keys()
+            if art_num != article_num
+        ]
+        
+        random.shuffle(other_articles)
+        
+        for other_art_num in other_articles:
+            passages = law_index[law_name][other_art_num]
+            
+            for passage in passages:
+                passage_id = passage.get("id")
+                if (passage_id and 
+                    passage_id not in positive_set and 
+                    passage_id not in seen_hn):
+                    hard_negatives.append(passage_id)
+                    seen_hn.add(passage_id)
+                    
+                    if len(hard_negatives) >= n:
+                        return hard_negatives[:n]
+    
+    # 전략 2: 다른 법령에서 랜덤 샘플링 (부족한 경우)
+    if len(hard_negatives) < n:
+        # positive에 사용된 법령들 수집
+        positive_law_names = {ref["law_name"] for ref in law_refs}
+        
+        # 다른 법령의 passage들 수집
+        other_law_passages = [
+            p for p in all_law_passages
+            if (p.get("id") not in positive_set and
+                p.get("id") not in seen_hn and
+                (p.get("law_name") or "").strip() not in positive_law_names)
+        ]
+        
+        random.shuffle(other_law_passages)
+        
+        for passage in other_law_passages:
+            passage_id = passage.get("id")
+            if passage_id and passage_id not in seen_hn:
+                hard_negatives.append(passage_id)
+                seen_hn.add(passage_id)
+                
+                if len(hard_negatives) >= n:
+                    break
+    
+    # 전략 3: 그래도 부족하면 전체에서 랜덤 샘플링
+    if len(hard_negatives) < n:
+        all_other_passages = [
+            p for p in all_law_passages
+            if p.get("id") not in positive_set and p.get("id") not in seen_hn
+        ]
+        random.shuffle(all_other_passages)
+        
+        for passage in all_other_passages:
+            passage_id = passage.get("id")
+            if passage_id:
+                hard_negatives.append(passage_id)
+                seen_hn.add(passage_id)
+                
+                if len(hard_negatives) >= n:
+                    break
+    
+    return hard_negatives[:n]
 
 def _article_has_number(art: str, num: str) -> bool:
     """article('제536조의2')에 num('536')이 포함되는지 간단 판정"""
@@ -258,11 +721,29 @@ def make_pairs(
     law_path: Optional[str],
     admin_path: Optional[str],
     prec_path: Optional[str],
-    out_path: str,
+    prec_json_dir: Optional[str] = None,
+    out_path: str = "",
     hn_per_q: int = 2,
     seed: int = 42,
     enable_cross_positive: bool = True,
+    max_positives_per_prec: int = 5,
+    prec_json_glob: str = "**/*.json",
 ) -> None:
+    """
+    질의-passage 쌍 생성.
+    
+    Args:
+        law_path: 법령 passage JSONL 경로
+        admin_path: 행정규칙 passage JSONL 경로
+        prec_path: 판례 passage JSONL 경로 (기존 방식)
+        prec_json_dir: 판례 원본 JSON 디렉토리 (새로운 방식, prec_path보다 우선)
+        out_path: 출력 JSONL 경로
+        hn_per_q: 질의당 hard negative 개수
+        seed: 랜덤 시드
+        enable_cross_positive: 판례→법령 cross positive 활성화
+        max_positives_per_prec: 판례당 최대 positive passage 개수
+        prec_json_glob: 판례 JSON 파일 검색 패턴
+    """
     random.seed(seed)
 
     law = list(read_jsonl(law_path)) if law_path else []
@@ -272,11 +753,28 @@ def make_pairs(
     rows: List[Dict[str, Any]] = []
     rows.extend(build_pairs_from_law(law, hn_per_q) if law else [])
     rows.extend(build_pairs_from_admin(admin, hn_per_q) if admin else [])
-    rows.extend(build_pairs_from_prec(prec, hn_per_q) if prec else [])
-
-    # 판례 → 법령 cross positive 부여
-    if enable_cross_positive and law:
-        attach_cross_positives(rows, law, max_add=2)
+    
+    # 판례 처리: 새로운 방식(원본 JSON) 우선, 없으면 기존 방식(passage)
+    if prec_json_dir:
+        # 새로운 방식: 판례 원본 JSON → 법령 passage
+        prec_rows = build_pairs_from_precedent_jsons(
+            prec_json_dir,
+            law,
+            max_positives=max_positives_per_prec,
+            hn_per_q=hn_per_q,
+            glob_pattern=prec_json_glob,
+        )
+        rows.extend(prec_rows)
+        print(f"[make_pairs] prec→law pairs: {len(prec_rows)} (from {prec_json_dir})")
+    elif prec:
+        # 기존 방식: 판례 passage → 판례 passage
+        prec_rows = build_pairs_from_prec(prec, hn_per_q)
+        rows.extend(prec_rows)
+        print(f"[make_pairs] prec→prec pairs: {len(prec_rows)} (from prec_passages.jsonl)")
+        
+        # 판례 → 법령 cross positive 부여
+        if enable_cross_positive and law:
+            attach_cross_positives(rows, law, max_add=2)
 
     # dedup by query_text
     rows = dedup_by_query(rows)
@@ -286,7 +784,7 @@ def make_pairs(
         r["query_id"] = f"Q_{i:05d}"
 
     write_jsonl(out_path, rows)
-    print(f"[make_pairs] queries: {len(rows)} → {out_path}")
+    print(f"[make_pairs] total queries: {len(rows)} → {out_path}")
 
 
 # =========================
@@ -296,10 +794,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--law", required=False, help="law_passages.jsonl")
     ap.add_argument("--admin", required=False, help="admin_passages.jsonl")
-    ap.add_argument("--prec", required=False, help="prec_passages.jsonl")
+    ap.add_argument("--prec", required=False, help="prec_passages.jsonl (기존 방식)")
+    ap.add_argument("--prec-json-dir", required=False, help="판례 원본 JSON 디렉토리 (새로운 방식, --prec보다 우선)")
+    ap.add_argument("--prec-json-glob", default="**/*.json", help="판례 JSON 파일 검색 패턴")
     ap.add_argument("--out", required=True, help="pairs_train.jsonl")
     ap.add_argument("--hn_per_q", type=int, default=2)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--max-positives-per-prec", type=int, default=5, help="판례당 최대 positive passage 개수")
     ap.add_argument("--no_cross", action="store_true", help="disable prec→law cross positives")
     args = ap.parse_args()
 
@@ -307,10 +808,13 @@ def main():
         law_path=args.law,
         admin_path=args.admin,
         prec_path=args.prec,
+        prec_json_dir=getattr(args, 'prec_json_dir', None),
         out_path=args.out,
         hn_per_q=args.hn_per_q,
         seed=args.seed,
         enable_cross_positive=(not args.no_cross),
+        max_positives_per_prec=args.max_positives_per_prec,
+        prec_json_glob=args.prec_json_glob,
     )
 
 if __name__ == "__main__":

@@ -240,3 +240,15 @@ poetry run python -m lex_dpr.data_processing.validate_dataset \
 * `augment_pairs.py`: 질의 패러프레이즈/동의어 증강
 * `text_cleaner.py`: 한국어 특화 정제(불용어/형태소)
 * `meta_index.py`: 메타 인덱스(법령명/시행일자/조문키)
+
+
+-------------
+
+단계 1: 데이터 구조 확인 (현재 완료)
+단계 2: 참조조문 파싱 함수 구현
+단계 3: 법령 passage 인덱스 생성
+단계 4: 질의 생성 함수 구현
+단계 5: 질의-법령 쌍 매칭
+단계 6: Hard negative 샘플링
+단계 7: 기존 함수 수정/대체
+단계 8: 통합 및 테스트
