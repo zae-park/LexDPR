@@ -8,20 +8,32 @@
 
 ```
 lex_dpr/models/
-├─ __init__.py
 ├─ factory.py          # 모델 로더(레지스트리/alias) – BiEncoder 생성 진입점
 ├─ encoders.py         # BiEncoder 래퍼(쿼리/패시지 템플릿, normalize, max_len)
-├─ templates.py        # BGE/None 템플릿(쿼리/패시지 프롬프트)
-├─ datasets.py         # PairDataset(기본), HN 포함 옵션
-├─ collators.py        # MNRLoss용 (q,p) 배치, (선택) HN 배치
+└─ templates.py        # BGE/None 템플릿(쿼리/패시지 프롬프트)
+
+lex_dpr/training/
+├─ bi_encoder.py       # 학습 루틴 (train_bi)
+├─ augment.py          # 질의/패시지 간단 증강 유틸
+├─ collators.py        # DataLoader collate 함수
+├─ datasets.py         # PairDataset, HN 옵션
+├─ distill.py          # 지식 증류 loss
+├─ grad.py             # gradient clipping 등
 ├─ losses.py           # MultipleNegativesRankingLoss 래핑
-├─ peft.py             # (선택) LoRA/IA3 어댑터 부착 & trainable freeze
-├─ export.py           # ST 저장/로드 + (선택) Transformer ONNX export
-├─ schedulers.py       # (선택) WarmupCosine 스케줄러 빌더
-└─ types.py            # (선택) 모델/트레이너 설정 타입(Pydantic)
+├─ miner.py            # hard negative 마이너(옵션)
+├─ optim.py            # AdamW 등 optimizer 빌더
+├─ peft.py             # LoRA/IA3 어댑터 부착
+├─ scheduler.py        # Warmup + cosine 스케줄러 빌더
+└─ types.py            # (선택) Pydantic 기반 설정 스키마
+
+lex_dpr/utils/
+├─ checkpoint.py       # 베스트 스코어 저장 헬퍼
+├─ export.py           # SentenceTransformer 저장/내보내기
+├─ textnorm.py         # 텍스트 정규화
+└─ tokenizer.py        # 토크나이저 로더
 ```
 
-> **원칙**: 학습(파인튜닝)에 필요한 것은 `models/`, 서빙/인덱싱은 `embed/`로 분리합니다. (FAISS는 `embed/`)
+> **원칙**: 모델 래퍼/템플릿은 `models/`, 학습 파이프라인은 `training/`, 범용 헬퍼는 `utils/`, 서빙/인덱싱은 `embed/`로 분리합니다. (FAISS는 `embed/`)
 
 ---
 
@@ -199,8 +211,8 @@ lex_dpr/models/
 * **데이터셋/로더**
 
   ```python
-  from lex_dpr.models.datasets import PairDataset
-  from lex_dpr.models.collators import mnr_collate
+  from lex_dpr.training.datasets import PairDataset
+  from lex_dpr.training.collators import mnr_collate
 
   ds = PairDataset(cfg.data.pairs, passages, use_bge_template=True, use_hard_negatives=False)
   loader = DataLoader(ds, batch_size=cfg.data.batches.bi, shuffle=True, collate_fn=mnr_collate)
@@ -209,14 +221,14 @@ lex_dpr/models/
 * **로스**
 
   ```python
-  from lex_dpr.models.losses import build_mnr_loss
+  from lex_dpr.training.losses import build_mnr_loss
   loss = build_mnr_loss(model, temperature=cfg.trainer.temperature)
   ```
 
 * **LoRA(옵션)**
 
   ```python
-  from lex_dpr.models.peft import attach_lora_to_st, enable_lora_only_train
+  from lex_dpr.training.peft import attach_lora_to_st, enable_lora_only_train
   model = attach_lora_to_st(model, r=16, alpha=32, dropout=0.05, target_modules=["q_proj","v_proj"])
   enable_lora_only_train(model)
   ```
@@ -224,7 +236,7 @@ lex_dpr/models/
 * **저장/로드**
 
   ```python
-  from lex_dpr.models.export import save_sentence_transformer
+  from lex_dpr.utils.export import save_sentence_transformer
   save_sentence_transformer(model, os.path.join(cfg.out_dir, "bi_encoder"))
   ```
 

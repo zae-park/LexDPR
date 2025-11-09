@@ -1,11 +1,11 @@
-# lex_dpr/models/peft.py
+# lex_dpr/training/peft.py
 from typing import Optional, Iterable
 from sentence_transformers import SentenceTransformer, models as st_models
 from peft import LoraConfig, get_peft_model, TaskType
 
 """
 model = SentenceTransformer(cfg.model.bi_model)
-from lex_dpr.models.peft import attach_lora_to_st, enable_lora_only_train
+from lex_dpr.training.peft import attach_lora_to_st, enable_lora_only_train
 model = attach_lora_to_st(model, r=16, alpha=32, dropout=0.05, target_modules=["q_proj","v_proj"])
 enable_lora_only_train(model)
 """

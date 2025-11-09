@@ -1,9 +1,11 @@
-# lex_dpr/models/datasets.py
-from torch.utils.data import Dataset
+# lex_dpr/training/datasets.py
 from typing import Dict, List, Tuple
+
+from torch.utils.data import Dataset
+
+from ..models.templates import TemplateMode, tq, tp
+from ..utils import textnorm as _text  # (없다면 건너뛰어도 됨)
 from ..utils.io import read_jsonl
-from .templates import TemplateMode, tq, tp
-from ..utils import text as _text  # (없다면 건너뛰어도 됨)
 
 class PairDataset(Dataset):
     """
