@@ -1,4 +1,4 @@
-# lex_dpr/training/bi_encoder.py
+# lex_dpr/trainer/base_trainer.py
 from __future__ import annotations
 
 import math

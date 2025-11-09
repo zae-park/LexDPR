@@ -46,12 +46,16 @@ echo "[3/5] 학습 시작"
 poetry run python -m scripts.train_cfg
 
 
+echo "[4/5] 임베딩 생성: corpus → embeds"
+poetry run python scripts/embed_corpus.py \
+  --model checkpoint/lexdpr/bi_encoder \
+  --input data/queries/queries.jsonl \
+  --id-field id \
+  --text-field question \
+  --encode-type query \
+  --outdir embeds \
+  --prefix queries
 
-echo "[3/5] Passage 인코딩"
-python scripts/encode_passages.py --model sentence-transformers/all-MiniLM-L6-v2 --input data/processed/corpus.jsonl --outdir checkpoint --batch_size 64 --pooling mean
-
-echo "[4/5] Query 인코딩"
-python scripts/encode_queries.py --model sentence-transformers/all-MiniLM-L6-v2 --queries data/queries/queries.jsonl --outdir checkpoint --batch_size 64 --pooling mean
 
 echo "[5/5] 인덱스 빌드 & 평가"
 python scripts/build_index.py --input checkpoint --output index --factory Flat --metric dot
