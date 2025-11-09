@@ -11,6 +11,7 @@ poetry run python -m lex_dpr.data_processing.preprocess_auto --src-dir data/admi
 poetry run python -m lex_dpr.data_processing.preprocess_auto --src-dir data/laws   --out-law data/processed/law_passages.jsonl   --glob "**/*.json"
 poetry run python -m lex_dpr.data_processing.preprocess_auto --src-dir data/precedents --out-prec data/processed/prec_passages.jsonl --glob "**/*.json"
 
+
 echo "[2/5] 질의-passage 쌍 생성: corpus → pairs_train.jsonl"
 poetry run python -m lex_dpr.data_processing.make_pairs \
   --law data/processed/law_passages.jsonl \
@@ -19,17 +20,32 @@ poetry run python -m lex_dpr.data_processing.make_pairs \
   --hn_per_q 10 \
   --max-positives-per-prec 5
 
+echo "[3/5] passage 코퍼스 병합: corpus → merged_corpus.jsonl"
+poetry run python -m lex_dpr.data_processing.merge_corpus \
+  --law   data/processed/law_passages.jsonl \
+  --admin data/processed/admin_passages.jsonl \
+  --out   data/processed/merged_corpus.jsonl
 
-poetry run python -m lex_dpr.data_processing.merge_corpus   --law   data/processed/law_passages.jsonl   --admin data/processed/admin_passages.jsonl   --out   data/processed/merged_corpus.jsonl
-poetry run python -m lex_dpr.data_processing.make_pairs --law   data/processed/law_passages.jsonl --admin data/processed/admin_passages.jsonl --out   data/processed/pairs_train.jsonl
+# poetry run python -m lex_dpr.data_processing.make_pairs \ # 행정규칙 사용
+#   --law data/processed/law_passages.jsonl \
+#   --admin data/processed/admin_passages.jsonl \
+#   --prec-json-dir data/precedents \
+#   --out data/processed/pairs_train.jsonl \
+#   --use-admin-for-prec \
+#   --hn_per_q 10 \
+#   --max-positives-per-prec 5
 
-# poetry run python -m lex_dpr.data_processing.make_pairs --law   data/processed/law_passages.jsonl --admin data/processed/admin_passages.jsonl --prec  data/processed/prec_passages.jsonl --out   data/processed/pairs_train.jsonl
+
+# echo "[2/5] 전처리: no_action_letters 병합"
+# poetry run python scripts/preprocess_acts.py --input data/no_action_letters --output data/processed/tmp.jsonl
+
+# poetry run python -m lex_dpr.data_processing.merge_corpus   --law   data/processed/law_passages.jsonl   --admin data/processed/admin_passages.jsonl   --out   data/processed/merged_corpus.jsonl
+# poetry run python -m lex_dpr.data_processing.make_pairs --law   data/processed/law_passages.jsonl --admin data/processed/admin_passages.jsonl --out   data/processed/pairs_train.jsonl
+
+echo "[3/5] 학습 시작"
+poetry run python -m scripts.train_cfg
 
 
-echo "[2/5] 전처리: no_action_letters 병합"
-python scripts/preprocess_acts.py --input data/no_action_letters --output data/processed/tmp.jsonl
-cat data/processed/tmp.jsonl >> data/processed/corpus.jsonl
-rm data/processed/tmp.jsonl
 
 echo "[3/5] Passage 인코딩"
 python scripts/encode_passages.py --model sentence-transformers/all-MiniLM-L6-v2 --input data/processed/corpus.jsonl --outdir checkpoint --batch_size 64 --pooling mean

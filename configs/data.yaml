@@ -1,9 +1,5 @@
 # configs/data.yaml
-pairs: output/pairs_train.jsonl
-passages:
-  - output/law_passages.jsonl
-  - output/prec_passages.jsonl
-
-batches:
-  bi: 64
-  ce: 16
+  pairs: data/processed/pairs_train.jsonl
+  passages: data/processed/law_passages.jsonl     # or the merged file above
+  batches:
+    bi: 64
