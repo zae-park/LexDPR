@@ -20,11 +20,9 @@ lex_dpr/training/
 ├─ distill.py          # 지식 증류 loss
 ├─ grad.py             # gradient clipping 등
 ├─ losses.py           # MultipleNegativesRankingLoss 래핑
-├─ miner.py            # hard negative 마이너(옵션)
 ├─ optim.py            # AdamW 등 optimizer 빌더
 ├─ peft.py             # LoRA/IA3 어댑터 부착
-├─ scheduler.py        # Warmup + cosine 스케줄러 빌더
-└─ types.py            # (선택) Pydantic 기반 설정 스키마
+└─ scheduler.py        # Warmup + cosine 스케줄러 빌더
 
 lex_dpr/utils/
 ├─ checkpoint.py       # 베스트 스코어 저장 헬퍼
