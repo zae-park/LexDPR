@@ -95,7 +95,7 @@ def main():
     ap.add_argument("--glob", default="**/*.json", help="파일 검색 패턴 (기본: **/*.json)")
     args = ap.parse_args()
 
-    from .utils_io import write_jsonl, append_jsonl  # 지연 임포트
+    from ..utils.io import write_jsonl, append_jsonl  # 지연 임포트
 
     p = Path(args.src_dir)
     files = sorted(p.glob(args.glob))

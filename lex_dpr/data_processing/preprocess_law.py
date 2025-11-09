@@ -3,7 +3,7 @@
 from __future__ import annotations
 import argparse
 from typing import Dict, Any, Iterator, List, Tuple, Union
-from .utils_io import read_json, write_jsonl
+from ..utils.io import read_json, write_jsonl
 from .filters import is_deleted_clause, normalize_whitespace
 
 Json = Dict[str, Any]

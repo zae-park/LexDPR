@@ -2,7 +2,7 @@
 from __future__ import annotations
 import argparse, re
 from typing import Dict, Any, List, Iterable, Union
-from .utils_io import read_json, write_jsonl
+from ..utils.io import read_json, write_jsonl
 from .filters import normalize_whitespace
 
 DEFAULT_SOURCE = "NLIC(국가법령정보)"

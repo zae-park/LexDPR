@@ -14,9 +14,10 @@ lex_dpr/data_processing/
 ├─ preprocess_prec.py         # 판례 JSON → passage JSONL
 ├─ make_pairs.py              # 질의-패시지 쌍(pair_train.jsonl) 생성
 ├─ filters.py                 # “삭제” 조문 필터, 중복/공백 정제
-├─ utils_io.py                # 입출력(read/write json, jsonl)
 ├─ merge_corpus.py            # 법령+판례 passage 병합
 └─ validate_dataset.py        # id 정합성 검증(pairs ↔ passages)
+
+※ JSON/JSONL 입출력 헬퍼는 `lex_dpr/utils/io.py`에 위치합니다.
 ```
 
 ---

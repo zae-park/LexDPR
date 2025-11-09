@@ -2,7 +2,7 @@
 from __future__ import annotations
 import argparse, json, random, re
 from typing import Dict, Any, List, Optional, Tuple
-from .utils_io import read_jsonl, write_jsonl
+from ..utils.io import read_jsonl, write_jsonl
 
 
 # =========================

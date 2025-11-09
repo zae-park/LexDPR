@@ -1,6 +1,6 @@
 from __future__ import annotations
 import argparse
-from .utils_io import read_jsonl, write_jsonl
+from ..utils.io import read_jsonl, write_jsonl
 
 def main():
     ap = argparse.ArgumentParser()

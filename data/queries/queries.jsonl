@@ -1,3 +1,0 @@
-{"id":"q1","question":"VDI 기반 망분리 예외 적용이 가능한가?","positive_ids":["doc1::p0000"]}
-{"id":"q2","question":"핫월렛과 콜드월렛 운영 시 필요한 내부통제는?","positive_ids":["nal1::p0000"]}
-{"id":"q3","question":"API 응답 캐시를 마이데이터에서 활용 가능할까?","positive_ids":["doc2::p0000"]}

@@ -16,7 +16,7 @@ from pathlib import Path
 from tqdm import tqdm
 from typing import Dict, Any, List, Optional
 
-from ../data_processing.utils_io import write_json
+from ..utils.io import write_json
 
 
 # 판결유형 필터링 기준
