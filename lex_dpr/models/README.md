@@ -12,7 +12,7 @@ lex_dpr/models/
 ├─ encoders.py         # BiEncoder 래퍼(쿼리/패시지 템플릿, normalize, max_len)
 └─ templates.py        # BGE/None 템플릿(쿼리/패시지 프롬프트)
 
-lex_dpr/training/
+lex_dpr/trainer/
 ├─ bi_encoder.py       # 학습 루틴 (train_bi)
 ├─ augment.py          # 질의/패시지 간단 증강 유틸
 ├─ collators.py        # DataLoader collate 함수
@@ -184,18 +184,6 @@ lex_dpr/utils/
 
 ---
 
-### 10) `types.py` (선택)
-
-* 역할: Pydantic 기반 설정 스키마로 **IDE 지원/유효성 검사** 향상
-* 예시:
-
-  * `BiModelCfg(name, template, normalize, max_len)`
-  * `TrainerCfg(epochs, lr, batch_size, temperature, eval_steps)`
-
-**현재**: OmegaConf로도 충분. 정적 타입 지원이 필요하면 추가.
-
----
-
 ## 학습 스크립트와의 연결 (예: `scripts/train_cfg.py`)
 
 * **모델 초기화**
@@ -209,8 +197,8 @@ lex_dpr/utils/
 * **데이터셋/로더**
 
   ```python
-  from lex_dpr.training.datasets import PairDataset
-  from lex_dpr.training.collators import mnr_collate
+  from lex_dpr.trainer.datasets import PairDataset
+  from lex_dpr.trainer.collators import mnr_collate
 
   ds = PairDataset(cfg.data.pairs, passages, use_bge_template=True, use_hard_negatives=False)
   loader = DataLoader(ds, batch_size=cfg.data.batches.bi, shuffle=True, collate_fn=mnr_collate)
@@ -219,14 +207,14 @@ lex_dpr/utils/
 * **로스**
 
   ```python
-  from lex_dpr.training.losses import build_mnr_loss
+  from lex_dpr.trainer.losses import build_mnr_loss
   loss = build_mnr_loss(model, temperature=cfg.trainer.temperature)
   ```
 
 * **LoRA(옵션)**
 
   ```python
-  from lex_dpr.training.peft import attach_lora_to_st, enable_lora_only_train
+  from lex_dpr.models.peft import attach_lora_to_st, enable_lora_only_train
   model = attach_lora_to_st(model, r=16, alpha=32, dropout=0.05, target_modules=["q_proj","v_proj"])
   enable_lora_only_train(model)
   ```

@@ -4,7 +4,7 @@ import sys
 
 from omegaconf import OmegaConf
 
-from lex_dpr.training.bi_encoder import train_bi
+from lex_dpr.trainer.bi_encoder import BiEncoderTrainer
 
 
 def main():
@@ -17,7 +17,8 @@ def main():
     cfg = OmegaConf.merge(cfg, overrides)
 
     print(OmegaConf.to_yaml(cfg))
-    train_bi(cfg)
+    trainer = BiEncoderTrainer(cfg)
+    trainer.train()
 
 
 if __name__ == "__main__":
