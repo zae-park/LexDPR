@@ -51,3 +51,19 @@ poetry run python entrypoint_embed.py \
 echo "[5/5] 인덱스 빌드 & 평가"
 python scripts/build_index.py --input checkpoint --output index --factory Flat --metric dot
 python scripts/evaluate.py --index_dir index --queries data/queries/queries.jsonl --top_k 10
+
+
+echo '[6/5] 서버 시작'
+
+# # API 서버 실행
+# poetry run python entrypoint_api.py \
+#   --model checkpoint/lexdpr/bi_encoder \
+#   --host 0.0.0.0 \
+#   --port 8000
+
+# PEFT 모델 사용 시
+poetry run python entrypoint_api.py \
+  --model checkpoint/lexdpr/bi_encoder \
+  --peft-adapter checkpoint/lexdpr/bi_encoder \
+  --host 0.0.0.0 \
+  --port 8000
