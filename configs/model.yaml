@@ -1,11 +1,13 @@
 # configs/model.yaml
 bi_model: ko-simcse
 use_bge_template: true
+max_len: 128  # 메모리 절약: 시퀀스 길이를 256으로 제한 (기본 512)
 
 # PEFT (LoRA) 설정 - 메모리 절약을 위해 활성화
 peft:
   enabled: true
-  r: 16              # LoRA rank (작을수록 메모리 절약, 8-32 권장)
-  alpha: 32          # LoRA alpha (보통 r의 2배)
+  r: 8               # LoRA rank (메모리 절약: 2-4 권장, 기본 16)
+  alpha: 16           # LoRA alpha (보통 r의 2배)
   dropout: 0.05      # LoRA dropout
-  target_modules: ["query", "value"]  # RoBERTa 계열 모델용 (ko-simcse는 RoBERTa 기반)
+  target_modules: ["query", "value"]  # 하나만 사용하면 메모리 절약 (query만)
+  # null이면 자동 감지, 또는 ["query", "value"], ["q_proj", "v_proj"] 등 모델에 맞게 설정

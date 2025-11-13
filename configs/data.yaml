@@ -2,4 +2,4 @@
   pairs: data/processed/pairs_train.jsonl
   passages: data/processed/law_passages.jsonl     # or the merged file above
   batches:
-    bi: 64
+    bi: 4
