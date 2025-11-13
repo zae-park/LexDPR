@@ -26,35 +26,26 @@ poetry run python -m lex_dpr.data_processing.merge_corpus \
   --admin data/processed/admin_passages.jsonl \
   --out   data/processed/merged_corpus.jsonl
 
-# poetry run python -m lex_dpr.data_processing.make_pairs \ # 행정규칙 사용
-#   --law data/processed/law_passages.jsonl \
-#   --admin data/processed/admin_passages.jsonl \
-#   --prec-json-dir data/precedents \
-#   --out data/processed/pairs_train.jsonl \
-#   --use-admin-for-prec \
-#   --hn_per_q 10 \
-#   --max-positives-per-prec 5
-
-
-# echo "[2/5] 전처리: no_action_letters 병합"
-# poetry run python scripts/preprocess_acts.py --input data/no_action_letters --output data/processed/tmp.jsonl
-
-# poetry run python -m lex_dpr.data_processing.merge_corpus   --law   data/processed/law_passages.jsonl   --admin data/processed/admin_passages.jsonl   --out   data/processed/merged_corpus.jsonl
-# poetry run python -m lex_dpr.data_processing.make_pairs --law   data/processed/law_passages.jsonl --admin data/processed/admin_passages.jsonl --out   data/processed/pairs_train.jsonl
-
 echo "[3/5] 학습 시작"
-poetry run python -m scripts.train_cfg
+poetry run python entrypoint_train.py 
 
 
 echo "[4/5] 임베딩 생성: corpus → embeds"
-poetry run python scripts/embed_corpus.py \
+# Passages 임베딩 추출
+poetry run python entrypoint_embed.py \
   --model checkpoint/lexdpr/bi_encoder \
-  --input data/queries/queries.jsonl \
-  --id-field id \
-  --text-field question \
-  --encode-type query \
+  --input data/processed/law_passages.jsonl \
   --outdir embeds \
-  --prefix queries
+  --prefix passages \
+  --type passage
+
+# # Queries 임베딩 추출
+# poetry run python entrypoint_embed.py \
+#   --model checkpoint/lexdpr/bi_encoder \
+#   --input data/queries/queries.jsonl \
+#   --outdir embeds \
+#   --prefix queries \
+#   --type query
 
 
 echo "[5/5] 인덱스 빌드 & 평가"

@@ -104,6 +104,7 @@ def main() -> None:
     )
     parser.add_argument("--limit", type=int, default=None, help="Optional number of rows to encode.")
     parser.add_argument("--no-normalize", action="store_true", help="Disable embedding normalization.")
+    parser.add_argument("--peft-adapter", type=str, default=None, help="Path to PEFT adapter if not auto-detected.")
     args = parser.parse_args()
 
     template_mode = _parse_template(args.template)
@@ -115,6 +116,7 @@ def main() -> None:
         template=template_mode,
         normalize=normalize,
         max_seq_length=max_len,
+        peft_adapter_path=args.peft_adapter,
     )
     if args.device:
         encoder.model.to(args.device)
