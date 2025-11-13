@@ -116,7 +116,7 @@ class BiEncoderTrainer:
         loss = losses.MultipleNegativesRankingLoss(self.model, scale=self.cfg.trainer.temperature)
 
         evaluator = None
-        if self.cfg.trainer.eval_pairs:
+        if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
             evaluator, _ = build_ir_evaluator(
                 passages=self.passages,
                 eval_pairs_path=self.cfg.trainer.eval_pairs,
@@ -124,6 +124,8 @@ class BiEncoderTrainer:
                 k_vals=self.cfg.trainer.k_values,
                 template=self.template_mode,
             )
+        elif self.cfg.trainer.eval_pairs:
+            print(f"[BiEncoderTrainer] Warning: eval_pairs file not found: {self.cfg.trainer.eval_pairs}. Skipping evaluation.")
 
         steps_per_epoch = max(1, math.ceil(len(self.examples) / self.batch_size))
         total_steps = steps_per_epoch * self.cfg.trainer.epochs
@@ -158,7 +160,7 @@ class BiEncoderTrainer:
         self.model.save(save_path)
         print(f"[BiEncoderTrainer] saved model to {save_path}")
 
-        if self.cfg.trainer.eval_pairs:
+        if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
             recall = eval_recall_at_k(
                 encoder=self.encoder,
                 passages=self.passages,
