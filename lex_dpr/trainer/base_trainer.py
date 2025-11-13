@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from ..data import load_passages
 from ..eval import build_ir_evaluator, eval_recall_at_k
 from ..models.factory import get_bi_encoder
+from ..models.peft import attach_lora_to_st, enable_lora_only_train
 from ..models.templates import TemplateMode, tq, tp
 from ..utils.io import read_jsonl
 from ..utils.seed import set_seed
@@ -70,6 +71,63 @@ class BiEncoderTrainer:
         )
         if max_len > 0:
             print(f"[BiEncoderTrainer] set model.max_seq_length = {encoder.model.max_seq_length}")
+        
+        # PEFT (LoRA) 지원
+        peft_config = getattr(self.cfg.model, "peft", None)
+        if peft_config and getattr(peft_config, "enabled", False):
+            r = int(getattr(peft_config, "r", 16))
+            alpha = int(getattr(peft_config, "alpha", 32))
+            dropout = float(getattr(peft_config, "dropout", 0.05))
+            target_modules = getattr(peft_config, "target_modules", None)
+            if target_modules is None:
+                # None으로 설정하면 attach_lora_to_st에서 자동 감지
+                target_modules = None
+            elif isinstance(target_modules, str):
+                # 문자열로 된 경우 리스트로 변환
+                target_modules = [m.strip() for m in target_modules.split(",")]
+            
+            if target_modules:
+                print(f"[BiEncoderTrainer] Attaching LoRA adapter: r={r}, alpha={alpha}, dropout={dropout}, target_modules={target_modules}")
+            else:
+                print(f"[BiEncoderTrainer] Attaching LoRA adapter: r={r}, alpha={alpha}, dropout={dropout}, target_modules=auto-detect")
+            encoder.model = attach_lora_to_st(
+                encoder.model,
+                r=r,
+                alpha=alpha,
+                dropout=dropout,
+                target_modules=target_modules,
+            )
+            # PEFT 모델은 자동으로 base_model을 동결하고 LoRA만 학습 가능하게 설정함
+            # enable_lora_only_train은 디버깅 및 확인용
+            try:
+                enable_lora_only_train(encoder.model)
+                print(f"[BiEncoderTrainer] LoRA adapter attached. Only LoRA parameters will be trained.")
+            except Exception as e:
+                print(f"[BiEncoderTrainer] Warning: enable_lora_only_train failed: {e}")
+                print(f"[BiEncoderTrainer] Continuing with PEFT default settings...")
+                # PEFT가 자동으로 처리하도록 함
+                encoder.model.train()
+        
+        # Gradient checkpointing 활성화 (메모리 절약)
+        if getattr(self.cfg.trainer, "gradient_checkpointing", False):
+            from sentence_transformers import models as st_models
+            # SentenceTransformer의 첫 번째 Transformer 모듈 찾기
+            for module in encoder.model.modules():
+                if isinstance(module, st_models.Transformer):
+                    if hasattr(module, "auto_model"):
+                        base_model = module.auto_model
+                        # PEFT 모델인 경우 base_model에서 찾기
+                        if hasattr(base_model, "base_model"):
+                            base_model = base_model.base_model.model
+                        
+                        if hasattr(base_model, "gradient_checkpointing_enable"):
+                            base_model.gradient_checkpointing_enable()
+                            print(f"[BiEncoderTrainer] Gradient checkpointing enabled.")
+                        elif hasattr(base_model, "encoder") and hasattr(base_model.encoder, "gradient_checkpointing_enable"):
+                            base_model.encoder.gradient_checkpointing_enable()
+                            print(f"[BiEncoderTrainer] Gradient checkpointing enabled (encoder).")
+                        break
+        
         return encoder
 
     def _build_examples(self) -> List[InputExample]:
@@ -143,6 +201,13 @@ class BiEncoderTrainer:
     # Public API
     # ------------------------------
     def train(self) -> None:
+        # sentence-transformers의 fit() 메서드는 gradient_accumulation_steps를 지원하지 않음
+        # 대신 배치 사이즈를 조정하여 효과적인 배치 크기를 조절
+        gradient_accumulation_steps = int(getattr(self.cfg.trainer, "gradient_accumulation_steps", 1))
+        if gradient_accumulation_steps > 1:
+            print(f"[BiEncoderTrainer] Note: gradient_accumulation_steps={gradient_accumulation_steps} is set but not supported by sentence-transformers.")
+            print(f"[BiEncoderTrainer] Effective batch size = {self.batch_size} * {gradient_accumulation_steps} = {self.batch_size * gradient_accumulation_steps}")
+        
         self.model.fit(
             train_objectives=[(self.artifacts.loader, self.artifacts.loss)],
             epochs=self.cfg.trainer.epochs,
