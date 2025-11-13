@@ -1,3 +1,11 @@
 # configs/model.yaml
 bi_model: ko-simcse
 use_bge_template: true
+
+# PEFT (LoRA) 설정 - 메모리 절약을 위해 활성화
+peft:
+  enabled: true
+  r: 16              # LoRA rank (작을수록 메모리 절약, 8-32 권장)
+  alpha: 32          # LoRA alpha (보통 r의 2배)
+  dropout: 0.05      # LoRA dropout
+  target_modules: ["query", "value"]  # RoBERTa 계열 모델용 (ko-simcse는 RoBERTa 기반)

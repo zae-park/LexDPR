@@ -16,5 +16,5 @@ data:
   passages: data/merged_corpus.jsonl
   pairs: data/pairs_train.jsonl
   batches:
-    bi: 4
+    bi: 2
   multiply: 0           # 필요 시 10 같이 키워 샘플 증폭
