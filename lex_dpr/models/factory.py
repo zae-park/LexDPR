@@ -4,7 +4,11 @@ from .templates import TemplateMode
 
 ALIASES = {
     "bge-m3": "BAAI/bge-m3",
-    "bge-m3-ko": "BAAI/bge-m3"   # ko 가중치 alias가 없다면 기본 m3 사용
+    "bge-m3-ko": "BAAI/bge-m3",   # ko 가중치 alias가 없다면 기본 m3 사용
+    # 작은 모델 옵션 (테스트/메모리 제약용)
+    "ko-simcse": "jhgan/ko-sroberta-multitask",  # ~110M, 한국어 전용, 추천
+    "multilingual-minilm": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",  # ~117M, 다국어
+    "multilingual-e5-small": "intfloat/multilingual-e5-small",  # ~118M, 다국어
 }
 
 def get_bi_encoder(name: str, template: str = "bge", normalize: bool = True, max_len: int | None = None) -> BiEncoder:
