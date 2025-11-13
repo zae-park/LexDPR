@@ -10,7 +10,7 @@ package-mode = false
 python = ">=3.12,<3.13"
 
 # ── Core DL stack ─────────────────────────────────────────
-transformers = "4.38.2" # ">=4.44.0,<5.0.0"
+transformers = ">=4.38.0,<4.44.0"  # 4.44.x는 PyTorch 2.6 요구, 4.38-4.43 사용
 accelerate = ">=0.31.0,<1.0.0"
 sentence-transformers = ">=3.0.1,<4.0.0"
 datasets = ">=2.18.0,<3.0.0"
@@ -45,6 +45,7 @@ sentencepiece = ">=0.2.1,<0.3.0"
 requests = ">=2.32.0,<3.0.0"
 beautifulsoup4 = ">=4.12.0,<5.0.0"
 lxml = ">=5.0.0,<7.0.0"
+peft = ">=0.10.0,<0.11.0"  # transformers 4.43와 호환되는 버전
 
 # ── PyTorch wheel sources ─────────────────────────────────
 typer = "^0.20.0"
