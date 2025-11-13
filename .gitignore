@@ -210,3 +210,10 @@ __marimo__/
 
 # Custom
 runs/
+
+# LexDPR specific
+data/processed/
+checkpoint/
+embeds/
+*.npz
+*.npy
