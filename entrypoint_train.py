@@ -1,10 +1,14 @@
 # scripts/train_cfg.py
 
 import sys
+import warnings
+
+# FutureWarning 억제 (선택사항)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 from omegaconf import OmegaConf
 
-from lex_dpr.trainer.bi_encoder import BiEncoderTrainer
+from lex_dpr.trainer.base_trainer import BiEncoderTrainer
 
 
 def main():
