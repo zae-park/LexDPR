@@ -213,7 +213,8 @@ runs/
 
 # LexDPR specific
 data/processed/
-checkpoint/
 embeds/
 *.npz
 *.npy
+
+# Note: checkpoint/ is tracked with Git LFS (see .gitattributes)

@@ -208,6 +208,12 @@ python scripts/evaluate.py --index_dir index --queries data/queries/queries.json
 MIT License  
 공공데이터(예: 비조치의견서, 법령 DB)는 각 출처의 오픈라이선스 정책을 반드시 준수해야 합니다.
 
+---
+
+## 📚 추가 문서
+
+- **[Git LFS 사용 가이드](docs/GIT_LFS_GUIDE.md)**: 모델 체크포인트와 대용량 파일을 Git LFS로 관리하는 방법, org-mirror와 origin 동기화 시 주의사항
+
 
 ###
 - https://www.law.go.kr/DRF/lawSearch.do?OC=hanwhasbank01&target=prec&type=HTML&&query=
