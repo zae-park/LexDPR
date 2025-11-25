@@ -216,5 +216,4 @@ data/processed/
 embeds/
 *.npz
 *.npy
-
-# Note: checkpoint/ is tracked with Git LFS (see .gitattributes)
+checkpoint/  # org-mirror에서는 LFS로 추적, origin에서는 제외

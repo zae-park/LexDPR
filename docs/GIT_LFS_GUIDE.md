@@ -103,9 +103,35 @@ git lfs track "*.bin"
 
 ## 🔄 org-mirror와 origin 동기화
 
-### 문제 상황
+### 저장소 분리 관리 전략
 
-org-mirror에서 LFS로 추적되는 파일을 추가한 후, origin에 push할 때 다음 에러가 발생할 수 있습니다:
+이 프로젝트는 **두 개의 저장소를 분리해서 관리**합니다:
+
+- **org-mirror** (비공개 조직, 폐쇄망 환경)
+  - 작업 환경
+  - checkpoint 파일 포함 (LFS 사용)
+  - 실제 모델 학습 및 개발
+  
+- **origin** (공개 저장소)
+  - 코드와 문서만 공유
+  - checkpoint 파일 제외 (`.gitignore`에 포함)
+  - 공개적으로 공유 가능한 내용만
+
+### 동기화 방법
+
+### org-mirror → origin 동기화
+
+**중요**: org-mirror는 폐쇄망 환경이므로, origin과 직접 동기화할 수 없습니다.
+
+**권장 워크플로우**:
+1. org-mirror에서 작업 (checkpoint 포함)
+2. 코드 변경사항만 커밋
+3. checkpoint 파일은 `.gitignore`에 의해 자동 제외됨
+4. origin에 push (코드와 문서만)
+
+### 문제 상황 (참고)
+
+만약 checkpoint 파일이 포함된 상태로 origin에 push하려고 하면 다음 에러가 발생합니다:
 
 ```
 remote: error: GH008: Your push referenced at least N unknown Git LFS objects
@@ -136,21 +162,20 @@ git lfs push origin main --all
 git push origin main
 ```
 
-#### 방법 3: checkpoint 파일 제외 (대안)
+#### 방법 3: checkpoint 파일 제외 (origin용, 권장)
 
-체크포인트 파일을 Git에 포함하지 않으려면:
+**origin 저장소에서는 checkpoint를 제외하는 것이 권장됩니다**:
 
 ```bash
-# .gitignore에 추가
-echo "checkpoint/" >> .gitignore
+# .gitignore에 이미 포함되어 있음
+# checkpoint/  # org-mirror에서는 LFS로 추적, origin에서는 제외
 
-# .gitattributes에서 제거
-# checkpoint/** 라인 삭제 또는 주석 처리
-
-# 이미 추적 중인 파일 제거
+# 이미 추적 중인 파일 제거 (필요시)
 git rm --cached -r checkpoint/
 git commit -m "Remove checkpoint from Git tracking"
 ```
+
+**주의**: org-mirror에서는 `.gitattributes`의 LFS 설정을 유지하고, origin으로 push할 때는 checkpoint가 자동으로 제외됩니다.
 
 ## ⚠️ 주의사항
 
