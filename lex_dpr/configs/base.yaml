@@ -2,6 +2,9 @@ mode: bi
 out_dir: checkpoint/lexdpr
 seed: 42
 
+# 테스트 실행 모드 (true로 설정 시 1 epoch 또는 100 iteration만 실행)
+test_run: false
+
 trainer:
   epochs: 1
   lr: 2e-5

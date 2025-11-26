@@ -98,19 +98,25 @@ LexDPR은 RAG 파이프라인의 생성기(generator)와 독립적으로 동작�
 
 ```bash
 # 1. 의존성 설치 (Poetry 패키지 매니저)
-poetry init
 poetry install
 
-# 2. Data Fetcher
-poetry run python data/crawler/law_openapi_ingest.py
+# 웹 로깅 서비스 사용 시 (선택사항)
+# 모든 웹 로깅 서비스 설치:
+poetry install --extras "web-logging"
+# 또는 개별 서비스만 설치:
+poetry install --extras "wandb"      # WandB만
+poetry install --extras "neptune"    # Neptune만
+poetry install --extras "mlflow"     # MLflow만
+# 여러 서비스 동시 설치:
+poetry install --extras "wandb neptune"
 
-# 3. Train
-## 3-1. Bi-Encoder 학습
-poetry run python scripts/train_cfg.py
-## 3-2. Cross-Encoder 학습
-poetry run python scripts/train_cfg.py mode=ce 
+# 2. 설정 파일 초기화
+poetry run lex-dpr config init
 
-
+# 3. 학습 실행
+poetry run lex-dpr train
+# 또는 설정 오버라이드:
+poetry run lex-dpr train trainer.epochs=5 trainer.lr=3e-5
 ```
 
 
