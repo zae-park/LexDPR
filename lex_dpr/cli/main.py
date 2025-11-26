@@ -9,6 +9,7 @@ LexDPR 메인 CLI 래퍼
   poetry run lex-dpr api --model ...
 """
 
+import logging
 import sys
 import warnings
 from typing import Optional
@@ -20,6 +21,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 # 서브커맨드 모듈 import
 from lex_dpr.cli import train, embed, api, config
+
+logger = logging.getLogger("lex_dpr.cli")
 
 app = typer.Typer(
     name="lex-dpr",

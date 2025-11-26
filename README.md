@@ -110,6 +110,12 @@ poetry install --extras "mlflow"     # MLflow만
 # 여러 서비스 동시 설치:
 poetry install --extras "wandb neptune"
 
+# 개발 시 (웹 로깅 서비스 포함하여 개발)
+# 방법 1: extras 사용
+poetry install --extras "web-logging"
+# 방법 2: 개발 그룹과 함께 설치 (향후 추가 예정)
+# poetry install --with dev
+
 # 2. 설정 파일 초기화
 poetry run lex-dpr config init
 
