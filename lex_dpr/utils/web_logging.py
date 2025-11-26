@@ -1,11 +1,11 @@
 """
-웹 로깅 서비스 통합 (Neptune, WandB, MLflow)
+웹 로깅 서비스 통합 (WandB, MLflow)
 
 사용 예시:
   # config에서 설정
   web_logging:
-    service: wandb  # neptune, wandb, mlflow
-    token: ${NEPTUNE_API_TOKEN}  # 환경 변수 또는 직접 입력
+    service: wandb  # wandb, mlflow
+    token: ${WANDB_API_KEY}  # 환경 변수 또는 직접 입력
     project: lexdpr
     name: experiment-001
 """
@@ -23,7 +23,7 @@ class WebLogger:
     def __init__(self, service: str, token: Optional[str] = None, **kwargs):
         """
         Args:
-            service: 'neptune', 'wandb', 'mlflow'
+            service: 'wandb', 'mlflow'
             token: API 토큰 (환경 변수에서 읽거나 직접 입력)
             **kwargs: 각 서비스별 추가 설정
         """
@@ -37,14 +37,12 @@ class WebLogger:
             return
         
         try:
-            if self.service == "neptune":
-                self._init_neptune(token, **kwargs)
-            elif self.service == "wandb":
+            if self.service == "wandb":
                 self._init_wandb(token, **kwargs)
             elif self.service == "mlflow":
                 self._init_mlflow(token, **kwargs)
             else:
-                logger.warning(f"지원하지 않는 웹 로깅 서비스: {service}")
+                logger.warning(f"지원하지 않는 웹 로깅 서비스: {service}. 지원 서비스: wandb, mlflow")
                 return
             
             self.is_active = True
@@ -53,30 +51,13 @@ class WebLogger:
             logger.warning(f"{service} 초기화 실패: {e}. 웹 로깅을 건너뜁니다.")
             self.is_active = False
     
-    def _init_neptune(self, token: str, project: str, name: Optional[str] = None, **kwargs):
-        """Neptune 초기화"""
-        try:
-            import neptune
-        except ImportError:
-            raise ImportError("neptune-client가 설치되지 않았습니다. 'poetry add neptune-client'로 설치하세요.")
-        
-        # 환경 변수에 토큰 설정
-        os.environ["NEPTUNE_API_TOKEN"] = token
-        
-        run = neptune.init_run(
-            project=project,
-            name=name,
-            **kwargs
-        )
-        self.logger_impl = run
-        logger.info(f"Neptune 프로젝트: {project}, 실행 이름: {name}")
-    
     def _init_wandb(self, token: str, project: str, name: Optional[str] = None, **kwargs):
         """WandB 초기화"""
         try:
             import wandb
         except ImportError:
-            raise ImportError("wandb가 설치되지 않았습니다. 'poetry add wandb'로 설치하세요.")
+            logger.warning("wandb가 설치되지 않았습니다. 'poetry install --extras wandb'로 설치하세요.")
+            raise
         
         # WandB 로그인
         wandb.login(key=token)
@@ -94,7 +75,8 @@ class WebLogger:
         try:
             import mlflow
         except ImportError:
-            raise ImportError("mlflow가 설치되지 않았습니다. 'poetry add mlflow'로 설치하세요.")
+            logger.warning("mlflow가 설치되지 않았습니다. 'poetry install --extras mlflow'로 설치하세요.")
+            raise
         
         # MLflow는 토큰을 직접 사용하지 않고, tracking_uri에 포함하거나 환경 변수로 설정
         if tracking_uri:
@@ -121,13 +103,14 @@ class WebLogger:
             return
         
         try:
-            if self.service == "neptune":
-                self.logger_impl["parameters"] = params
-            elif self.service == "wandb":
+            if self.service == "wandb":
                 self.logger_impl.config.update(params)
             elif self.service == "mlflow":
-                import mlflow
-                mlflow.log_params(params)
+                try:
+                    import mlflow
+                    mlflow.log_params(params)
+                except ImportError:
+                    logger.warning("mlflow가 설치되지 않았습니다. 파라미터 로깅을 건너뜁니다.")
         except Exception as e:
             logger.warning(f"파라미터 로깅 실패: {e}")
     
@@ -137,24 +120,20 @@ class WebLogger:
             return
         
         try:
-            if self.service == "neptune":
-                if step is not None:
-                    for key, value in metrics.items():
-                        self.logger_impl[f"metrics/{key}"].log(value, step=step)
-                else:
-                    for key, value in metrics.items():
-                        self.logger_impl[f"metrics/{key}"].log(value)
-            elif self.service == "wandb":
+            if self.service == "wandb":
                 if step is not None:
                     self.logger_impl.log(metrics, step=step)
                 else:
                     self.logger_impl.log(metrics)
             elif self.service == "mlflow":
-                import mlflow
-                if step is not None:
-                    mlflow.log_metrics(metrics, step=step)
-                else:
-                    mlflow.log_metrics(metrics)
+                try:
+                    import mlflow
+                    if step is not None:
+                        mlflow.log_metrics(metrics, step=step)
+                    else:
+                        mlflow.log_metrics(metrics)
+                except ImportError:
+                    logger.warning("mlflow가 설치되지 않았습니다. 메트릭 로깅을 건너뜁니다.")
         except Exception as e:
             logger.warning(f"메트릭 로깅 실패: {e}")
     
@@ -164,13 +143,14 @@ class WebLogger:
             return
         
         try:
-            if self.service == "neptune":
-                self.logger_impl[f"artifacts/{artifact_path or os.path.basename(local_path)}"].upload(local_path)
-            elif self.service == "wandb":
+            if self.service == "wandb":
                 self.logger_impl.log_artifact(local_path, name=artifact_path)
             elif self.service == "mlflow":
-                import mlflow
-                mlflow.log_artifact(local_path, artifact_path)
+                try:
+                    import mlflow
+                    mlflow.log_artifact(local_path, artifact_path)
+                except ImportError:
+                    logger.warning("mlflow가 설치되지 않았습니다. 아티팩트 로깅을 건너뜁니다.")
         except Exception as e:
             logger.warning(f"아티팩트 로깅 실패: {e}")
     
@@ -180,13 +160,15 @@ class WebLogger:
             return
         
         try:
-            if self.service == "neptune":
-                self.logger_impl.stop()
-            elif self.service == "wandb":
+            if self.service == "wandb":
                 self.logger_impl.finish()
             elif self.service == "mlflow":
-                import mlflow
-                mlflow.end_run()
+                try:
+                    import mlflow
+                    mlflow.end_run()
+                except ImportError:
+                    logger.warning("mlflow가 설치되지 않았습니다. 로깅 종료를 건너뜁니다.")
+                    return
             logger.info(f"{self.service.upper()} 로깅 종료")
         except Exception as e:
             logger.warning(f"로깅 종료 실패: {e}")
@@ -198,10 +180,18 @@ def _create_single_web_logger(web_logging_cfg) -> Optional[WebLogger]:
     if not service:
         return None
     
+    # 서비스 이름 정규화
+    service = str(service).lower().strip()
+    
+    # 지원하는 서비스인지 확인
+    if service not in ["wandb", "mlflow"]:
+        logger.warning(f"지원하지 않는 웹 로깅 서비스: {service}. 지원 서비스: wandb, mlflow")
+        return None
+    
     # 토큰 가져오기 (환경 변수 또는 직접 입력)
     token = getattr(web_logging_cfg, "token", None)
     if token and isinstance(token, str) and token.startswith("${") and token.endswith("}"):
-        # 환경 변수 참조 (예: ${NEPTUNE_API_TOKEN})
+        # 환경 변수 참조 (예: ${WANDB_API_KEY})
         env_var = token[2:-1]
         token = os.getenv(env_var)
         if not token:
@@ -212,12 +202,9 @@ def _create_single_web_logger(web_logging_cfg) -> Optional[WebLogger]:
         logger.warning(f"{service} 토큰이 제공되지 않았습니다.")
         return None
     
-    # 서비스별 설정 추출
+    # 서비스별 설정 추출 (지정된 서비스에 대해서만)
     kwargs = {}
-    if service == "neptune":
-        kwargs["project"] = getattr(web_logging_cfg, "project", "lexdpr")
-        kwargs["name"] = getattr(web_logging_cfg, "name", None)
-    elif service == "wandb":
+    if service == "wandb":
         kwargs["project"] = getattr(web_logging_cfg, "project", "lexdpr")
         kwargs["name"] = getattr(web_logging_cfg, "name", None)
         kwargs["entity"] = getattr(web_logging_cfg, "entity", None)
@@ -226,7 +213,12 @@ def _create_single_web_logger(web_logging_cfg) -> Optional[WebLogger]:
         kwargs["experiment_name"] = getattr(web_logging_cfg, "experiment_name", "lexdpr")
         kwargs["run_name"] = getattr(web_logging_cfg, "run_name", None)
     
-    return WebLogger(service=service, token=token, **kwargs)
+    # 지정된 서비스만 초기화
+    try:
+        return WebLogger(service=service, token=token, **kwargs)
+    except Exception as e:
+        logger.warning(f"{service} 웹 로거 생성 실패: {e}")
+        return None
 
 
 class MultiWebLogger:

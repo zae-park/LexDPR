@@ -27,7 +27,7 @@ data:
 # 웹 로깅 설정 (선택사항)
 # 단일 서비스 사용:
 # web_logging:
-#   service: wandb  # neptune, wandb, mlflow 중 선택
+#   service: wandb  # wandb, mlflow 중 선택
 #   token: ${WANDB_API_KEY}  # 환경 변수 참조 또는 직접 입력
 #   project: lexdpr
 #   name: experiment-001  # 실행 이름 (선택사항)
@@ -37,10 +37,6 @@ data:
 #   - service: wandb
 #     token: ${WANDB_API_KEY}
 #     project: lexdpr
-#     name: experiment-001
-#   - service: neptune
-#     token: ${NEPTUNE_API_TOKEN}
-#     project: username/project-name
 #     name: experiment-001
 #   - service: mlflow
 #     token: ${MLFLOW_TRACKING_TOKEN}  # 선택사항
