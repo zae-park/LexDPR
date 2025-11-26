@@ -21,3 +21,27 @@ data:
     bi: 4              # 메모리 절약: 1로 설정하고 gradient_accumulation_steps 사용
   multiply: 0           # 필요 시 10 같이 키워 샘플 증폭
 
+# 웹 로깅 설정 (선택사항)
+# 단일 서비스 사용:
+# web_logging:
+#   service: wandb  # neptune, wandb, mlflow 중 선택
+#   token: ${WANDB_API_KEY}  # 환경 변수 참조 또는 직접 입력
+#   project: lexdpr
+#   name: experiment-001  # 실행 이름 (선택사항)
+#
+# 여러 서비스 동시 사용:
+# web_logging:
+#   - service: wandb
+#     token: ${WANDB_API_KEY}
+#     project: lexdpr
+#     name: experiment-001
+#   - service: neptune
+#     token: ${NEPTUNE_API_TOKEN}
+#     project: username/project-name
+#     name: experiment-001
+#   - service: mlflow
+#     token: ${MLFLOW_TRACKING_TOKEN}  # 선택사항
+#     tracking_uri: http://localhost:5000
+#     experiment_name: lexdpr
+#     run_name: experiment-001
+

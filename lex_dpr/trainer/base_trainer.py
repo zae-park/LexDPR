@@ -5,7 +5,7 @@ import logging
 import math
 import os
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from omegaconf import DictConfig
 from sentence_transformers import InputExample, losses
@@ -18,6 +18,7 @@ from ..models.peft import attach_lora_to_st, enable_lora_only_train
 from ..models.templates import TemplateMode, tq, tp
 from ..utils.io import read_jsonl
 from ..utils.seed import set_seed
+from ..utils.web_logging import create_web_logger, WebLogger
 
 logger = logging.getLogger("lex_dpr.trainer")
 
@@ -42,6 +43,36 @@ class TrainerArtifacts:
     warmup_steps: int
 
 
+class WebLoggingEvaluatorWrapper:
+    """sentence-transformers evaluator를 래핑하여 웹 로깅에 결과 전송"""
+    
+    def __init__(self, evaluator, web_logger: WebLogger):
+        self.evaluator = evaluator
+        self.web_logger = web_logger
+    
+    def __call__(self, model, output_path: str = None, epoch: int = -1, steps: int = -1):
+        """evaluator 호출 및 결과를 웹 로깅으로 전송"""
+        # 원본 evaluator 실행
+        result = self.evaluator(model, output_path, epoch, steps)
+        
+        # 결과를 웹 로깅으로 전송
+        if result and isinstance(result, dict):
+            # sentence-transformers evaluator는 dict 형태로 메트릭을 반환
+            metrics = {}
+            for key, value in result.items():
+                if isinstance(value, (int, float)):
+                    # 메트릭 이름 정규화 (예: "val_ndcg@10" -> "eval/ndcg@10")
+                    metric_name = key.replace("val_", "eval/").replace("_", "/")
+                    metrics[metric_name] = float(value)
+            
+            if metrics:
+                step = steps if steps >= 0 else epoch
+                self.web_logger.log_metrics(metrics, step=step)
+                logger.info(f"평가 메트릭을 웹 로깅 서비스에 전송했습니다: {len(metrics)}개")
+        
+        return result
+
+
 class BiEncoderTrainer:
     """
     학습 스크립트와 분리된 BI-Encoder Trainer.
@@ -52,6 +83,9 @@ class BiEncoderTrainer:
         set_seed(cfg.seed)
 
         logger.info(f"시드 설정: {cfg.seed}")
+        
+        # 웹 로깅 초기화
+        self.web_logger = create_web_logger(cfg)
         
         self.template_mode = _resolve_template_mode(cfg.model)
         logger.info(f"템플릿 모드: {self.template_mode.value}")
@@ -85,6 +119,10 @@ class BiEncoderTrainer:
             logger.info(f"  - 평가기: 활성화 (평가 스텝: {cfg.trainer.eval_steps})")
         else:
             logger.info(f"  - 평가기: 비활성화")
+        
+        # 웹 로깅에 하이퍼파라미터 로깅
+        if self.web_logger and self.web_logger.is_active:
+            self._log_hyperparameters()
 
     # ------------------------------
     # Build helpers
@@ -204,13 +242,18 @@ class BiEncoderTrainer:
 
         evaluator = None
         if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
-            evaluator, _ = build_ir_evaluator(
+            base_evaluator, _ = build_ir_evaluator(
                 passages=self.passages,
                 eval_pairs_path=self.cfg.trainer.eval_pairs,
                 read_jsonl_fn=read_jsonl,
                 k_vals=self.cfg.trainer.k_values,
                 template=self.template_mode,
             )
+            # 웹 로깅이 활성화된 경우 래퍼로 감싸기
+            if self.web_logger and self.web_logger.is_active:
+                evaluator = WebLoggingEvaluatorWrapper(base_evaluator, self.web_logger)
+            else:
+                evaluator = base_evaluator
         elif self.cfg.trainer.eval_pairs:
             logger.warning(f"eval_pairs 파일을 찾을 수 없습니다: {self.cfg.trainer.eval_pairs}. 평가를 건너뜁니다.")
 
@@ -226,6 +269,49 @@ class BiEncoderTrainer:
             warmup_steps=warmup_steps,
         )
 
+    # ------------------------------
+    # Web Logging Helpers
+    # ------------------------------
+    def _log_hyperparameters(self) -> None:
+        """하이퍼파라미터를 웹 로깅 서비스에 전송"""
+        if not self.web_logger or not self.web_logger.is_active:
+            return
+        
+        params = {
+            "mode": self.cfg.mode,
+            "seed": self.cfg.seed,
+            "trainer.epochs": self.cfg.trainer.epochs,
+            "trainer.lr": self.cfg.trainer.lr,
+            "trainer.batch_size": self.batch_size,
+            "trainer.gradient_accumulation_steps": getattr(self.cfg.trainer, "gradient_accumulation_steps", 1),
+            "trainer.use_amp": self.cfg.trainer.use_amp,
+            "trainer.temperature": self.cfg.trainer.temperature,
+            "model.bi_model": self.cfg.model.bi_model,
+            "model.use_bge_template": self.cfg.model.use_bge_template,
+            "model.max_len": getattr(self.cfg.model, "max_len", None),
+            "data.passages_count": len(self.passages),
+            "data.pairs_count": len(self.pairs),
+            "data.examples_count": len(self.examples),
+        }
+        
+        # PEFT 설정 추가
+        if hasattr(self.cfg.model, "peft") and self.cfg.model.peft.enabled:
+            params["model.peft.enabled"] = True
+            params["model.peft.r"] = self.cfg.model.peft.r
+            params["model.peft.alpha"] = self.cfg.model.peft.alpha
+            params["model.peft.dropout"] = self.cfg.model.peft.dropout
+        else:
+            params["model.peft.enabled"] = False
+        
+        self.web_logger.log_params(params)
+    
+    def _log_evaluation_metrics(self, metrics: Dict[str, float], step: Optional[int] = None) -> None:
+        """평가 메트릭을 웹 로깅 서비스에 전송"""
+        if not self.web_logger or not self.web_logger.is_active:
+            return
+        
+        self.web_logger.log_metrics(metrics, step=step)
+    
     # ------------------------------
     # Public API
     # ------------------------------
@@ -259,6 +345,14 @@ class BiEncoderTrainer:
         save_path = os.path.join(self.cfg.out_dir, "bi_encoder")
         self.model.save(save_path)
         logger.info(f"✅ 모델 저장 완료: {save_path}")
+        
+        # 웹 로깅에 모델 아티팩트 저장
+        if self.web_logger and self.web_logger.is_active:
+            try:
+                self.web_logger.log_artifact(save_path, artifact_path="model")
+                logger.info("모델이 웹 로깅 서비스에 업로드되었습니다.")
+            except Exception as e:
+                logger.warning(f"모델 아티팩트 업로드 실패: {e}")
 
         if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
             logger.info("")
@@ -271,6 +365,16 @@ class BiEncoderTrainer:
                 k=self.cfg.trainer.k,
             )
             logger.info(f"✅ Recall@{self.cfg.trainer.k}: {recall:.4f} ({recall*100:.2f}%)")
+            
+            # 웹 로깅에 최종 평가 결과 전송
+            if self.web_logger and self.web_logger.is_active:
+                self._log_evaluation_metrics({
+                    f"eval/recall@{self.cfg.trainer.k}": recall,
+                })
+        
+        # 웹 로깅 종료
+        if self.web_logger and self.web_logger.is_active:
+            self.web_logger.finish()
 
 
 def train_bi(cfg: DictConfig) -> None:
