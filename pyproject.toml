@@ -58,9 +58,7 @@ url = "https://download.pytorch.org/whl/cu121"
 priority = "explicit"
 
 [tool.poetry.scripts]
-train = "lex_dpr.cli.train:main"
-embed = "lex_dpr.cli.embed:main"
-api = "lex_dpr.cli.api:main"
+lex-dpr = "lex_dpr.cli.main:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
