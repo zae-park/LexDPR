@@ -50,12 +50,16 @@ def _log_config_summary(cfg):
     logger.info(f"  시드: {cfg.seed}")
     logger.info("")
     logger.info("🎓 학습 설정:")
-    logger.info(f"  에포크: {cfg.trainer.epochs}")
+    test_run = getattr(cfg, "test_run", False)
+    effective_epochs = 1 if test_run else cfg.trainer.epochs
+    logger.info(f"  에포크: {effective_epochs}" + (" (테스트 실행 모드)" if test_run else ""))
     logger.info(f"  학습률: {cfg.trainer.lr}")
     logger.info(f"  배치 크기: {cfg.data.batches.bi}")
     logger.info(f"  Gradient Accumulation Steps: {cfg.trainer.gradient_accumulation_steps}")
     logger.info(f"  AMP 사용: {cfg.trainer.use_amp}")
     logger.info(f"  평가 스텝: {cfg.trainer.eval_steps if cfg.trainer.eval_steps > 0 else '비활성화'}")
+    if test_run:
+        logger.info(f"  🧪 테스트 실행 모드: 활성화 (최대 100 iteration 또는 1 epoch)")
     logger.info("")
     logger.info("📊 데이터:")
     logger.info(f"  Passages: {cfg.data.passages}")

@@ -232,8 +232,21 @@ class BiEncoderTrainer:
         return batch_size
 
     def _build_artifacts(self) -> TrainerArtifacts:
+        # 테스트 실행 모드: 최대 100 iteration으로 제한
+        test_run = getattr(self.cfg, "test_run", False)
+        max_steps = 100 if test_run else None
+        
+        if test_run and max_steps:
+            # 테스트 실행 모드: 제한된 예제만 사용
+            max_examples = max_steps * self.batch_size
+            limited_examples = self.examples[:max_examples]
+            logger.info(f"🧪 테스트 실행 모드: {len(limited_examples):,}개 예제만 사용 (최대 {max_steps} iteration)")
+            examples_to_use = limited_examples
+        else:
+            examples_to_use = self.examples
+        
         loader = DataLoader(
-            self.examples,
+            examples_to_use,
             batch_size=self.batch_size,
             shuffle=True,
             drop_last=False,
@@ -257,8 +270,14 @@ class BiEncoderTrainer:
         elif self.cfg.trainer.eval_pairs:
             logger.warning(f"eval_pairs 파일을 찾을 수 없습니다: {self.cfg.trainer.eval_pairs}. 평가를 건너뜁니다.")
 
-        steps_per_epoch = max(1, math.ceil(len(self.examples) / self.batch_size))
-        total_steps = steps_per_epoch * self.cfg.trainer.epochs
+        steps_per_epoch = max(1, math.ceil(len(examples_to_use) / self.batch_size))
+        
+        # 테스트 실행 모드: epochs를 1로 강제
+        effective_epochs = 1 if test_run else self.cfg.trainer.epochs
+        if test_run and self.cfg.trainer.epochs > 1:
+            logger.info(f"🧪 테스트 실행 모드: epochs를 1로 제한 (원래 설정: {self.cfg.trainer.epochs})")
+        
+        total_steps = steps_per_epoch * effective_epochs
         warmup_steps = max(10, int(total_steps * 0.1))
 
         return TrainerArtifacts(
@@ -316,6 +335,10 @@ class BiEncoderTrainer:
     # Public API
     # ------------------------------
     def train(self) -> None:
+        # 테스트 실행 모드 확인
+        test_run = getattr(self.cfg, "test_run", False)
+        effective_epochs = 1 if test_run else self.cfg.trainer.epochs
+        
         # sentence-transformers의 fit() 메서드는 gradient_accumulation_steps를 지원하지 않음
         # 대신 배치 사이즈를 조정하여 효과적인 배치 크기를 조절
         gradient_accumulation_steps = int(getattr(self.cfg.trainer, "gradient_accumulation_steps", 1))
@@ -324,12 +347,15 @@ class BiEncoderTrainer:
             logger.info(f"참고: gradient_accumulation_steps={gradient_accumulation_steps}는 sentence-transformers에서 지원되지 않습니다.")
             logger.info(f"효과적인 배치 크기: {self.batch_size} × {gradient_accumulation_steps} = {effective_batch_size}")
         
-        logger.info(f"학습 시작 (에포크: {self.cfg.trainer.epochs}, 학습률: {self.cfg.trainer.lr})")
+        if test_run:
+            logger.info(f"🧪 테스트 실행 모드: 학습 시작 (에포크: {effective_epochs}, 최대 {self.artifacts.steps_per_epoch} iteration, 학습률: {self.cfg.trainer.lr})")
+        else:
+            logger.info(f"학습 시작 (에포크: {effective_epochs}, 학습률: {self.cfg.trainer.lr})")
         logger.info("")
         
         self.model.fit(
             train_objectives=[(self.artifacts.loader, self.artifacts.loss)],
-            epochs=self.cfg.trainer.epochs,
+            epochs=effective_epochs,
             warmup_steps=self.artifacts.warmup_steps,
             scheduler="warmupcosine",
             optimizer_params={"lr": self.cfg.trainer.lr},
