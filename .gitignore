@@ -215,6 +215,8 @@ runs/
 data/processed/
 data/precedents/
 data/admin_rules/
+configs/
+checkpoints/
 embeds/
 *.npz
 *.npy

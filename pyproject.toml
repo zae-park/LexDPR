@@ -50,13 +50,6 @@ beautifulsoup4 = ">=4.12.0,<5.0.0"
 lxml = ">=5.0.0,<7.0.0"
 peft = ">=0.10.0,<0.11.0"  # transformers 4.43와 호환되는 버전
 
-# ── PyTorch wheel sources ─────────────────────────────────
-typer = "^0.20.0"
-[[tool.poetry.source]]
-name = "pytorch-cu121"
-url = "https://download.pytorch.org/whl/cu121"
-priority = "explicit"
-
 # ── 선택적 의존성 (Optional Dependencies) ─────────────────
 [tool.poetry.extras]
 web-logging = [
@@ -67,6 +60,18 @@ web-logging = [
 wandb = ["wandb"]
 neptune = ["neptune-client"]
 mlflow = ["mlflow"]
+
+[tool.poetry.group.dev.dependencies]
+wandb = "*"
+neptune-client = "*"
+mlflow = "*"
+
+# ── PyTorch wheel sources ─────────────────────────────────
+typer = "^0.20.0"
+[[tool.poetry.source]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+priority = "explicit"
 
 [tool.poetry.scripts]
 lex-dpr = "lex_dpr.cli.main:main"
