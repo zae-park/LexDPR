@@ -108,20 +108,20 @@ def main():
             t, rows = process_file(fp)
             if t == "law":
                 if rows:
-                n_law += 1
-                buf_law.extend(rows)
+                    n_law += 1
+                    buf_law.extend(rows)
                 else:
                     n_law_empty += 1
             elif t == "admin":
                 if rows:
-                n_admin += 1
-                buf_admin.extend(rows)
+                    n_admin += 1
+                    buf_admin.extend(rows)
                 else:
                     n_admin_empty += 1
             elif t == "prec":
                 if rows:
-                n_prec += 1
-                buf_prec.extend(rows)
+                    n_prec += 1
+                    buf_prec.extend(rows)
                 else:
                     n_prec_empty += 1
             else:

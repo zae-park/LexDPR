@@ -213,6 +213,8 @@ runs/
 
 # LexDPR specific
 data/processed/
+data/precedents/
+data/admin_rules/
 embeds/
 *.npz
 *.npy
