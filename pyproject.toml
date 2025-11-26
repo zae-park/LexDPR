@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "LexDPR: Legal Document Retriever & Reranker"
 authors = ["zae-park <tom941105@gmail.com>"]
 readme = "README.md"
-package-mode = false
+package-mode = true
+packages = [{include = "lex_dpr"}]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
@@ -55,6 +56,11 @@ typer = "^0.20.0"
 name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"
 priority = "explicit"
+
+[tool.poetry.scripts]
+train = "lex_dpr.cli.train:main"
+embed = "lex_dpr.cli.embed:main"
+api = "lex_dpr.cli.api:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
