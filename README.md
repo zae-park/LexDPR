@@ -105,10 +105,9 @@ poetry install
 poetry install --extras "web-logging"
 # 또는 개별 서비스만 설치:
 poetry install --extras "wandb"      # WandB만
-poetry install --extras "neptune"    # Neptune만
 poetry install --extras "mlflow"     # MLflow만
 # 여러 서비스 동시 설치:
-poetry install --extras "wandb neptune"
+poetry install --extras "wandb mlflow"
 
 # 개발 시 (웹 로깅 서비스 포함하여 개발)
 # 방법 1: extras 사용

@@ -54,16 +54,13 @@ peft = ">=0.10.0,<0.11.0"  # transformers 4.43와 호환되는 버전
 [tool.poetry.extras]
 web-logging = [
     "wandb",
-    "neptune-client",
     "mlflow",
 ]
 wandb = ["wandb"]
-neptune = ["neptune-client"]
 mlflow = ["mlflow"]
 
 [tool.poetry.group.dev.dependencies]
 wandb = "*"
-neptune-client = "*"
 mlflow = "*"
 
 # ── PyTorch wheel sources ─────────────────────────────────
