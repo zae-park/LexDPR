@@ -73,6 +73,32 @@ class WebLoggingEvaluatorWrapper:
         return result
 
 
+class WebLoggingCallback:
+    """sentence-transformers fit() 메서드의 학습 중 loss를 WandB에 로깅하는 콜백"""
+    
+    def __init__(self, web_logger: WebLogger):
+        self.web_logger = web_logger
+        self.current_step = 0
+        self.current_epoch = 0
+    
+    def __call__(self, score, epoch, steps):
+        """학습 중 호출되는 콜백 (loss 값 로깅)"""
+        if not self.web_logger or not self.web_logger.is_active:
+            return
+        
+        # score는 일반적으로 loss 값
+        # sentence-transformers의 fit() 메서드에서 제공하는 정보
+        if isinstance(score, (int, float)):
+            self.current_step = steps if steps >= 0 else self.current_step
+            self.current_epoch = epoch if epoch >= 0 else self.current_epoch
+            
+            # loss를 WandB에 로깅
+            metrics = {
+                "train/loss": float(score),
+            }
+            self.web_logger.log_metrics(metrics, step=self.current_step)
+
+
 class BiEncoderTrainer:
     """
     학습 스크립트와 분리된 BI-Encoder Trainer.
@@ -353,6 +379,12 @@ class BiEncoderTrainer:
             logger.info(f"학습 시작 (에포크: {effective_epochs}, 학습률: {self.cfg.trainer.lr})")
         logger.info("")
         
+        # 학습 중 loss 로깅을 위한 콜백 추가
+        callback = None
+        if self.web_logger and self.web_logger.is_active:
+            callback = WebLoggingCallback(self.web_logger)
+            logger.info("학습 중 loss를 WandB에 로깅합니다.")
+        
         self.model.fit(
             train_objectives=[(self.artifacts.loader, self.artifacts.loss)],
             epochs=effective_epochs,
@@ -363,6 +395,7 @@ class BiEncoderTrainer:
             show_progress_bar=True,
             evaluator=self.artifacts.evaluator,
             evaluation_steps=self.cfg.trainer.eval_steps if self.artifacts.evaluator else None,
+            callback=callback,  # 학습 중 loss 로깅 콜백
         )
 
         logger.info("")

@@ -51,8 +51,8 @@ def build_ir_evaluator(
         mrr_at_k=list(normalized_k),
         ndcg_at_k=list(normalized_k),
         map_at_k=list(normalized_k),
-        accuracy_at_k=list(normalized_k),  # 비어 있으면 안 됨
-        precision_recall_at_k=[],  # 필요하면 list(normalized_k)로 변경 가능
+        accuracy_at_k=list(normalized_k),  # Recall@k와 유사 (상위 k개 중 정답 포함 여부)
+        precision_recall_at_k=list(normalized_k),  # Precision@k, Recall@k 명시적으로 계산
         show_progress_bar=False,
         name="val",
     )
