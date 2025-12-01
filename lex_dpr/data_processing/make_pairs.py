@@ -1,7 +1,9 @@
 # lex_dpr/data_processing/make_pairs.py
 from __future__ import annotations
-import argparse, json, random, re
+import argparse, json, random, re, time
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, Tuple
+from tqdm import tqdm
 from ..utils.io import read_jsonl, write_jsonl
 
 
@@ -252,7 +254,7 @@ def _sample_hard_negatives(
 def build_pairs_from_law(law: List[Dict[str, Any]], hn_per_q: int) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     law = [p for p in law if _valid_passage(p)]
-    for p in law:
+    for p in tqdm(law, desc="  법령 쌍 생성", unit="passage"):
         q = build_query_law(p)
         pos = [p["id"]]
         hn = _sample_hard_negatives(p, law, hn_per_q, group_key="law_name")
@@ -272,7 +274,7 @@ def build_pairs_from_law(law: List[Dict[str, Any]], hn_per_q: int) -> List[Dict[
 def build_pairs_from_admin(admin: List[Dict[str, Any]], hn_per_q: int) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     admin = [p for p in admin if _valid_passage(p)]
-    for p in admin:
+    for p in tqdm(admin, desc="  행정규칙 쌍 생성", unit="passage"):
         q = build_query_admin(p)
         pos = [p["id"]]
         hn = _sample_hard_negatives(p, admin, hn_per_q, group_key="rule_name")
@@ -296,7 +298,7 @@ def build_pairs_from_prec(prec: List[Dict[str, Any]], hn_per_q: int) -> List[Dic
     """
     rows: List[Dict[str, Any]] = []
     prec = [p for p in prec if _valid_passage(p)]
-    for p in prec:
+    for p in tqdm(prec, desc="  판례 passage 쌍 생성", unit="passage"):
         q = build_query_prec(p)
         pos = [p["id"]]
         hn = _sample_hard_negatives(p, prec, hn_per_q, group_key="court_name")
@@ -320,6 +322,34 @@ def build_pairs_from_prec(prec: List[Dict[str, Any]], hn_per_q: int) -> List[Dic
         })
     return rows
 
+def _process_single_precedent_json(
+    fp: str,
+    law_index: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    admin_index: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    law_passages: List[Dict[str, Any]],
+    admin_passages: List[Dict[str, Any]],
+    max_positives: int,
+    hn_per_q: int,
+) -> Optional[Dict[str, Any]]:
+    """단일 판례 JSON 파일 처리 (병렬화용 워커 함수)"""
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            prec_json = json.load(f)
+        
+        pair = build_pair_from_precedent_json(
+            prec_json,
+            law_index,
+            admin_index,
+            law_passages,
+            admin_passages,
+            max_positives=max_positives,
+            hn_per_q=hn_per_q,
+        )
+        return pair
+    except Exception as e:
+        return None  # 에러는 상위에서 처리
+
+
 def build_pairs_from_precedent_jsons(
     prec_json_dir: str,
     law_passages: List[Dict[str, Any]],
@@ -328,6 +358,7 @@ def build_pairs_from_precedent_jsons(
     hn_per_q: int = 2,
     glob_pattern: str = "**/*.json",
     use_admin: bool = False,
+    max_workers: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
     판례 원본 JSON 파일들에서 질의-법령/행정규칙 쌍 생성 (새로운 방식).
@@ -341,11 +372,13 @@ def build_pairs_from_precedent_jsons(
         hn_per_q: 질의당 hard negative 개수
         glob_pattern: 파일 검색 패턴
         use_admin: 행정규칙 사용 여부 (기본값: False, 법령만 사용)
+        max_workers: 병렬 처리 워커 수 (None이면 CPU 코어 수)
     
     Returns:
         질의-법령/행정규칙 쌍 리스트
     """
     from pathlib import Path
+    import os
     
     p = Path(prec_json_dir)
     if not p.exists():
@@ -361,30 +394,44 @@ def build_pairs_from_precedent_jsons(
     law_index = build_law_index(law_passages)
     admin_index = build_admin_index(admin_passages) if use_admin else {}
     
-    rows: List[Dict[str, Any]] = []
     files = sorted(p.glob(glob_pattern))
+    if not files:
+        return []
     
-    for fp in files:
-        try:
-            with open(fp, "r", encoding="utf-8") as f:
-                prec_json = json.load(f)
-            
-            # 질의-법령/행정규칙 쌍 생성
-            pair = build_pair_from_precedent_json(
-                prec_json,
+    # 병렬 처리 워커 수 결정
+    if max_workers is None:
+        max_workers = min(len(files), os.cpu_count() or 4)
+    
+    rows: List[Dict[str, Any]] = []
+    
+    # 병렬 처리: ThreadPoolExecutor 사용 (I/O + CPU 혼합 작업)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 모든 작업 제출
+        future_to_file = {
+            executor.submit(
+                _process_single_precedent_json,
+                str(fp),
                 law_index,
                 admin_index,
                 law_passages,
                 admin_passages,
-                max_positives=max_positives,
-                hn_per_q=hn_per_q,
-            )
-            
-            if pair:
-                rows.append(pair)
-        except Exception as e:
-            print(f"[warn] skip {fp}: {e}")
-            continue
+                max_positives,
+                hn_per_q,
+            ): fp
+            for fp in files
+        }
+        
+        # 진행 상황 표시
+        with tqdm(total=len(files), desc="  판례 JSON 처리", unit="file") as pbar:
+            for future in as_completed(future_to_file):
+                fp = future_to_file[future]
+                pbar.update(1)
+                try:
+                    pair = future.result()
+                    if pair:
+                        rows.append(pair)
+                except Exception as e:
+                    tqdm.write(f"[warn] skip {fp}: {e}")
     
     return rows
 
@@ -791,10 +838,11 @@ def attach_cross_positives(rows: List[Dict[str, Any]], law_passages: List[Dict[s
         return
     law_by_name = _law_index_by_name(law_passages)
 
-    for r in rows:
+    # cross positive 적용 대상만 필터링
+    prec_rows = [r for r in rows if (r.get("meta") or {}).get("type") == "prec"]
+    
+    for r in tqdm(prec_rows, desc="  cross positive 부여", unit="pair"):
         meta = r.get("meta") or {}
-        if meta.get("type") != "prec":
-            continue
         src = meta.get("source_text") or r.get("query_text", "")
         adds: List[str] = []
 
@@ -851,6 +899,7 @@ def make_pairs(
     max_positives_per_prec: int = 5,
     prec_json_glob: str = "**/*.json",
     use_admin_for_prec: bool = False,
+    max_workers: Optional[int] = None,
 ) -> None:
     """
     질의-passage 쌍 생성.
@@ -868,19 +917,46 @@ def make_pairs(
         prec_json_glob: 판례 JSON 파일 검색 패턴
         use_admin_for_prec: 판례→법령/행정규칙 쌍 생성 시 행정규칙 사용 여부 (기본값: False)
     """
+    t0 = time.time()
     random.seed(seed)
 
+    print("[make_pairs] ===== 질의-passage 쌍 생성 시작 =====")
+    print(f"[make_pairs] law_path        = {law_path}")
+    print(f"[make_pairs] admin_path      = {admin_path}")
+    print(f"[make_pairs] prec_path       = {prec_path}")
+    print(f"[make_pairs] prec_json_dir   = {prec_json_dir}")
+    print(f"[make_pairs] out_path        = {out_path}")
+    print(f"[make_pairs] hn_per_q       = {hn_per_q}")
+    print(f"[make_pairs] seed           = {seed}")
+    print(f"[make_pairs] use_admin_for_prec = {use_admin_for_prec}")
+
+    # 1) Passage 로드
     law = list(read_jsonl(law_path)) if law_path else []
     admin = list(read_jsonl(admin_path)) if admin_path else []
     prec = list(read_jsonl(prec_path)) if prec_path else []
 
+    print(f"[make_pairs] 로드된 법령 passages: {len(law):,}")
+    print(f"[make_pairs] 로드된 행정규칙 passages: {len(admin):,}")
+    print(f"[make_pairs] 로드된 판례 passages: {len(prec):,}")
+
     rows: List[Dict[str, Any]] = []
-    rows.extend(build_pairs_from_law(law, hn_per_q) if law else [])
-    rows.extend(build_pairs_from_admin(admin, hn_per_q) if admin else [])
+
+    # 2) 법령/행정규칙 기반 쌍 생성
+    if law:
+        print("[make_pairs] 법령 기반 쌍 생성 중...")
+        law_rows = build_pairs_from_law(law, hn_per_q)
+        rows.extend(law_rows)
+        print(f"[make_pairs]   생성된 law pairs: {len(law_rows):,}")
+
+    if admin:
+        print("[make_pairs] 행정규칙 기반 쌍 생성 중...")
+        admin_rows = build_pairs_from_admin(admin, hn_per_q)
+        rows.extend(admin_rows)
+        print(f"[make_pairs]   생성된 admin pairs: {len(admin_rows):,}")
     
-    # 판례 처리: 새로운 방식(원본 JSON) 우선, 없으면 기존 방식(passage)
+    # 3) 판례 기반 쌍 생성: 새로운 방식(원본 JSON) 우선, 없으면 기존 방식(passage)
     if prec_json_dir:
-        # 새로운 방식: 판례 원본 JSON → 법령/행정규칙 passage
+        print("[make_pairs] 판례 원본 JSON 기반 쌍 생성 중...")
         prec_rows = build_pairs_from_precedent_jsons(
             prec_json_dir,
             law,
@@ -889,29 +965,75 @@ def make_pairs(
             hn_per_q=hn_per_q,
             glob_pattern=prec_json_glob,
             use_admin=use_admin_for_prec,
+            max_workers=max_workers,
         )
         rows.extend(prec_rows)
         admin_status = "law+admin" if use_admin_for_prec else "law only"
-        print(f"[make_pairs] prec→{admin_status} pairs: {len(prec_rows)} (from {prec_json_dir})")
+        print(f"[make_pairs] prec→{admin_status} pairs: {len(prec_rows):,} (from {prec_json_dir})")
     elif prec:
-        # 기존 방식: 판례 passage → 판례 passage
+        print("[make_pairs] 판례 passage 기반 쌍 생성 중...")
         prec_rows = build_pairs_from_prec(prec, hn_per_q)
         rows.extend(prec_rows)
-        print(f"[make_pairs] prec→prec pairs: {len(prec_rows)} (from prec_passages.jsonl)")
+        print(f"[make_pairs] prec→prec pairs: {len(prec_rows):,} (from prec_passages.jsonl)")
 
-    # 판례 → 법령 cross positive 부여
+    # 4) 판례 → 법령 cross positive 부여
     if enable_cross_positive and law:
+        print("[make_pairs] 판례→법령 cross positive 부여 중...")
+        before_pos = sum(len(r.get("positive_passages", [])) for r in rows)
         attach_cross_positives(rows, law, max_add=2)
+        after_pos = sum(len(r.get("positive_passages", [])) for r in rows)
+        print(f"[make_pairs]   cross positive 적용 전/후 positive 개수 합계: {before_pos:,} → {after_pos:,}")
 
-    # dedup by query_text
+    # 5) dedup by query_text
+    print("[make_pairs] query_text 기준 중복 제거 중...")
+    before = len(rows)
     rows = dedup_by_query(rows)
+    after = len(rows)
+    print(f"[make_pairs]   중복 제거: {before:,} → {after:,}")
 
-    # assign query_id sequentially for stability
-    for i, r in enumerate(rows, 1):
+    # -------------------------
+    # Train / Valid / Test split
+    # -------------------------
+    # query_id 의 마지막 숫자를 기준으로 분할:
+    # - 마지막 숫자 8  → valid
+    # - 마지막 숫자 9  → test
+    # - 나머지        → train
+    print("[make_pairs] Train/Valid/Test 분할 중...")
+    train_rows: List[Dict[str, Any]] = []
+    valid_rows: List[Dict[str, Any]] = []
+    test_rows: List[Dict[str, Any]] = []
+
+    for i, r in enumerate(tqdm(rows, desc="  분할 진행", unit="pair"), 1):
         r["query_id"] = f"Q_{i:05d}"
+        d = i % 10
+        if d == 8:
+            valid_rows.append(r)
+        elif d == 9:
+            test_rows.append(r)
+        else:
+            train_rows.append(r)
 
-    write_jsonl(out_path, rows)
-    print(f"[make_pairs] total queries: {len(rows)} → {out_path}")
+    from pathlib import Path
+
+    out_path_obj = Path(out_path)
+    parent = out_path_obj.parent
+    stem = out_path_obj.stem
+    suffix = out_path_obj.suffix or ".jsonl"
+
+    train_path = out_path_obj
+    valid_path = parent / f"{stem}_valid{suffix}"
+    test_path = parent / f"{stem}_test{suffix}"
+
+    write_jsonl(str(train_path), train_rows)
+    write_jsonl(str(valid_path), valid_rows)
+    write_jsonl(str(test_path), test_rows)
+
+    elapsed = time.time() - t0
+    print(f"[make_pairs] total queries: {len(rows):,}")
+    print(f"[make_pairs]   train: {len(train_rows):,} → {train_path}")
+    print(f"[make_pairs]   valid: {len(valid_rows):,} → {valid_path}")
+    print(f"[make_pairs]   test : {len(test_rows):,} → {test_path}")
+    print(f"[make_pairs] 완료 (소요 시간: {elapsed:.1f}초)")
 
 
 # =========================

@@ -10,8 +10,10 @@ LexDPR 메인 CLI 래퍼
 """
 
 import logging
+import shutil
 import sys
 import warnings
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -20,8 +22,9 @@ import typer
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # 서브커맨드 모듈 import
-from lex_dpr.cli import train, embed, api, config
+from lex_dpr.cli import train, embed, api, config, eval_cli
 from lex_dpr.crawler.crawl_precedents import PrecedentCrawler, REQUEST_DELAY
+from lex_dpr.data_processing import make_pairs as make_pairs_mod
 
 logger = logging.getLogger("lex_dpr.cli")
 
@@ -261,6 +264,126 @@ def api_command(
         api.main()
     finally:
         sys.argv = original_argv
+
+
+@app.command("eval")
+def eval_command():
+    """
+    학습된 Bi-Encoder 체크포인트를 이용해 Retrieval 메트릭을 평가합니다.
+
+    scripts/evaluate.py 와 동일한 인자를 사용할 수 있습니다.
+
+    예시:
+      poetry run lex-dpr eval
+      poetry run lex-dpr eval --model checkpoint/lexdpr/bi_encoder --eval-pairs data/pairs_eval.jsonl
+      poetry run lex-dpr eval --k-values 1 3 5 10 --output eval_results.json
+    """
+    original_argv = sys.argv.copy()
+    try:
+        # 'lex-dpr eval' 이후의 인자를 그대로 전달
+        remaining_args = sys.argv[2:] if len(sys.argv) > 2 else []
+        sys.argv = ["evaluate"] + remaining_args
+        eval_cli.main()
+    finally:
+        sys.argv = original_argv
+
+
+@app.command("gen-data")
+def gen_data_command(
+    law: str = typer.Option(
+        "data/processed/law_passages.jsonl",
+        "--law",
+        help="법령 passage JSONL 경로 (기본값: data/processed/law_passages.jsonl)",
+    ),
+    admin: str = typer.Option(
+        "data/processed/admin_passages.jsonl",
+        "--admin",
+        help="행정규칙 passage JSONL 경로 (기본값: data/processed/admin_passages.jsonl)",
+    ),
+    prec: str = typer.Option(
+        "data/processed/prec_passages.jsonl",
+        "--prec",
+        help="판례 passage JSONL 경로 (기본값: data/processed/prec_passages.jsonl)",
+    ),
+    prec_json_dir: str = typer.Option(
+        "data/precedents",
+        "--prec-json-dir",
+        help="판례 원본 JSON 디렉토리 (기본값: data/precedents)",
+    ),
+    out: str = typer.Option(
+        "data/pairs_train.jsonl",
+        "--out",
+        help="생성할 train pairs 경로 (기본값: data/pairs_train.jsonl)",
+    ),
+    hn_per_q: int = typer.Option(
+        10,
+        "--hn-per-q",
+        help="질의당 hard negative 개수 (기본값: 10)",
+    ),
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        help="랜덤 시드 (기본값: 42)",
+    ),
+    max_positives_per_prec: int = typer.Option(
+        5,
+        "--max-positives-per-prec",
+        help="판례당 최대 positive passage 개수 (기본값: 5)",
+    ),
+    use_admin_for_prec: bool = typer.Option(
+        False,
+        "--use-admin-for-prec",
+        help="판례→법령/행정규칙 쌍 생성 시 행정규칙도 포함할지 여부 (기본값: False)",
+    ),
+    max_workers: Optional[int] = typer.Option(
+        None,
+        "--max-workers",
+        help="병렬 처리 워커 수 (기본값: CPU 코어 수)",
+    ),
+):
+    """
+    전처리된 passage들로부터 train/valid/test 질의-passage 쌍을 생성합니다.
+
+    - 마지막 자리수가 8인 query_id → valid
+    - 마지막 자리수가 9인 query_id → test
+    - 나머지 → train
+
+    결과:
+      - data/pairs_train.jsonl
+      - data/pairs_train_valid.jsonl
+      - data/pairs_train_test.jsonl
+      - data/pairs_eval.jsonl (valid 세트 복사본)
+    """
+    # make_pairs 모듈을 통해 실제 쌍 생성 및 split 수행
+    make_pairs_mod.make_pairs(
+        law_path=law,
+        admin_path=admin,
+        prec_path=prec,
+        prec_json_dir=prec_json_dir,
+        out_path=out,
+        hn_per_q=hn_per_q,
+        seed=seed,
+        enable_cross_positive=True,
+        max_positives_per_prec=max_positives_per_prec,
+        prec_json_glob="**/*.json",
+        use_admin_for_prec=use_admin_for_prec,
+        max_workers=max_workers,
+    )
+
+    out_path_obj = Path(out)
+    parent = out_path_obj.parent
+    stem = out_path_obj.stem
+    suffix = out_path_obj.suffix or ".jsonl"
+
+    valid_path = parent / f"{stem}_valid{suffix}"
+    eval_path = Path("data/pairs_eval.jsonl")
+
+    if valid_path.exists():
+        eval_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(valid_path, eval_path)
+        logger.info(f"평가용 pairs_eval.jsonl 생성: {eval_path} (from {valid_path})")
+    else:
+        logger.warning(f"valid 파일을 찾을 수 없어 pairs_eval.jsonl을 생성하지 못했습니다: {valid_path}")
 
 
 def main():
