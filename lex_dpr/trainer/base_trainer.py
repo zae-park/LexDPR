@@ -58,17 +58,28 @@ class WebLoggingEvaluatorWrapper:
         # 결과를 웹 로깅으로 전송
         if result and isinstance(result, dict):
             # sentence-transformers evaluator는 dict 형태로 메트릭을 반환
+            # 예: "val_cosine_ndcg@10" -> "eval/ndcg@10"
             metrics = {}
             for key, value in result.items():
                 if isinstance(value, (int, float)):
-                    # 메트릭 이름 정규화 (예: "val_ndcg@10" -> "eval/ndcg@10")
-                    metric_name = key.replace("val_", "eval/").replace("_", "/")
+                    # 메트릭 이름 정규화
+                    # "val_cosine_ndcg@10" -> "eval/ndcg@10"
+                    # "val_cosine_recall@5" -> "eval/recall@5"
+                    metric_name = key
+                    # "val_" 제거
+                    if metric_name.startswith("val_"):
+                        metric_name = metric_name[4:]
+                    # "cosine_" 제거 (거리 메트릭은 보통 cosine이므로 생략)
+                    if metric_name.startswith("cosine_"):
+                        metric_name = metric_name[7:]
+                    # "eval/" prefix 추가
+                    metric_name = f"eval/{metric_name}"
                     metrics[metric_name] = float(value)
             
             if metrics:
                 step = steps if steps >= 0 else epoch
                 self.web_logger.log_metrics(metrics, step=step)
-                logger.info(f"평가 메트릭을 웹 로깅 서비스에 전송했습니다: {len(metrics)}개")
+                logger.info(f"평가 메트릭을 웹 로깅 서비스에 전송했습니다: {len(metrics)}개 메트릭 (step={step})")
         
         return result
 
