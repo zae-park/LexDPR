@@ -386,6 +386,130 @@ def gen_data_command(
         logger.warning(f"valid 파일을 찾을 수 없어 pairs_eval.jsonl을 생성하지 못했습니다: {valid_path}")
 
 
+@app.command("analyze-pairs")
+def analyze_pairs_command(
+    pairs_dir: Optional[str] = typer.Option(
+        None,
+        "--pairs-dir",
+        help="pairs 파일들이 있는 디렉토리 (자동으로 train/valid/test 파일 찾기)",
+    ),
+    train: Optional[str] = typer.Option(
+        None,
+        "--train",
+        help="Train 데이터셋 경로 (pairs_train.jsonl)",
+    ),
+    valid: Optional[str] = typer.Option(
+        None,
+        "--valid",
+        help="Valid 데이터셋 경로 (pairs_train_valid.jsonl)",
+    ),
+    test: Optional[str] = typer.Option(
+        None,
+        "--test",
+        help="Test 데이터셋 경로 (pairs_train_test.jsonl)",
+    ),
+    passages: Optional[str] = typer.Option(
+        "data/processed/merged_corpus.jsonl",
+        "--passages",
+        help="Passage 코퍼스 경로 (토큰 길이 계산용)",
+    ),
+    tokenizer: str = typer.Option(
+        "BAAI/bge-m3",
+        "--tokenizer",
+        help="토크나이저 모델 이름 (기본값: BAAI/bge-m3). 'none'이면 단어 수로 계산",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="분석 리포트 출력 파일 경로 (텍스트 + JSON)",
+    ),
+):
+    """
+    데이터 품질 분석: train/valid/test 데이터셋의 통계 및 분포 분석
+    
+    분석 항목:
+    - 데이터셋 크기 (train/valid/test)
+    - Positive/Negative 비율 및 분포
+    - 쿼리 타입별 분포 (law, admin, prec)
+    - 질의(query) 토큰 길이 분포
+    - Passage 토큰 길이 분포 (positive passages)
+    
+    예시:
+      poetry run lex-dpr analyze-pairs --pairs-dir data
+      poetry run lex-dpr analyze-pairs --train data/pairs_train.jsonl --valid data/pairs_train_valid.jsonl
+    """
+    from pathlib import Path
+    from scripts.analyze_pairs import analyze_dataset, print_analysis_report
+    
+    # 파일 경로 결정
+    train_path = None
+    valid_path = None
+    test_path = None
+    
+    if pairs_dir:
+        pairs_dir_obj = Path(pairs_dir)
+        train_path = pairs_dir_obj / "pairs_train.jsonl"
+        valid_path = pairs_dir_obj / "pairs_train_valid.jsonl"
+        test_path = pairs_dir_obj / "pairs_train_test.jsonl"
+        
+        # 파일 존재 확인
+        if not train_path.exists():
+            train_path = None
+        if not valid_path.exists():
+            valid_path = None
+        if not test_path.exists():
+            test_path = None
+    else:
+        train_path = train
+        valid_path = valid
+        test_path = test
+    
+    if not any([train_path, valid_path, test_path]):
+        logger.error("분석할 데이터셋 파일을 찾을 수 없습니다. --pairs-dir 또는 --train/--valid/--test를 지정하세요.")
+        raise typer.Exit(1)
+    
+    # 토크나이저 설정
+    tokenizer_name = tokenizer if tokenizer.lower() != "none" else None
+    
+    # 분석 실행
+    results = {}
+    
+    if train_path and Path(train_path).exists():
+        logger.info(f"[분석 중] Train 데이터셋: {train_path}")
+        results["train"] = analyze_dataset(
+            str(train_path),
+            passages_path=passages,
+            tokenizer_name=tokenizer_name,
+            dataset_name="train",
+        )
+    
+    if valid_path and Path(valid_path).exists():
+        logger.info(f"[분석 중] Valid 데이터셋: {valid_path}")
+        results["valid"] = analyze_dataset(
+            str(valid_path),
+            passages_path=passages,
+            tokenizer_name=tokenizer_name,
+            dataset_name="valid",
+        )
+    
+    if test_path and Path(test_path).exists():
+        logger.info(f"[분석 중] Test 데이터셋: {test_path}")
+        results["test"] = analyze_dataset(
+            str(test_path),
+            passages_path=passages,
+            tokenizer_name=tokenizer_name,
+            dataset_name="test",
+        )
+    
+    if not results:
+        logger.error("분석할 데이터가 없습니다.")
+        raise typer.Exit(1)
+    
+    # 리포트 출력
+    print_analysis_report(results, output_file=output)
+
+
 def main():
     """메인 진입점"""
     app()

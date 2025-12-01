@@ -68,11 +68,13 @@
 - ✅ Hard Negative 샘플링
 - ✅ Cross-positive 쌍 생성 (판례 → 법령/행정규칙)
 - ✅ Train/Valid/Test 자동 분할 (query_id 마지막 자리 기준)
-- 📋 쌍 생성 통계 및 품질 리포트
+- ✅ 데이터 품질 점검 스크립트 (`analyze_pairs.py`)
+  - ✅ 쿼리 타입별 비율, positive/negative 개수 분포
+  - ✅ 질의 및 passage 토큰 길이 분포 분석
+  - ✅ Train/Valid/Test 데이터셋 통계 리포트
+  - ✅ CLI 명령어 통합 (`lex-dpr analyze-pairs`)
+- 📋 쌍 생성 통계 및 품질 리포트 (자동 생성)
 - 📋 Negative 샘플링 전략 개선 (더 어려운 negative)
-- 📋 데이터 품질 점검 스크립트 (`analyze_pairs.py`)
-  - 쿼리 타입별 비율, positive/negative 개수 분포
-  - 법령 vs 행정규칙 비율, 텍스트 길이 분포 등 통계 리포트
 - 📋 전략별 모델 비교 실험 (법령만 / 행정규칙만 / 법령+행정규칙)
 
 ### 2.4 데이터 검증
@@ -284,6 +286,12 @@
 - ✅ 설정 검증
 - 📋 설정 템플릿 생성
 
+### 8.6 데이터 분석 CLI
+- ✅ 데이터 품질 분석 명령어 (`lex-dpr analyze-pairs`)
+- ✅ Train/Valid/Test 통계 분석
+- ✅ 토큰 길이 분포 분석
+- 📋 시각화 기능 (히스토그램, 박스플롯 등)
+
 ---
 
 ## 9. 문서화
@@ -426,14 +434,15 @@
 ### 완료된 주요 기능 (✅)
 1. 프로젝트 기본 구조 및 설정
 2. 데이터 처리 파이프라인 (법령, 행정규칙, 판례)
-3. 학습 쌍 생성 및 검증
+3. 학습 쌍 생성 및 검증 (Train/Valid/Test 자동 분할)
 4. BiEncoder 모델 구현
 5. 학습 파이프라인 (Trainer, Loss, Optimizer)
 6. 웹 로깅 통합 (WandB, MLflow)
-7. CLI 인터페이스 (train, embed, api, config)
+7. CLI 인터페이스 (train, embed, api, config, eval, gen-data, analyze-pairs, smoke-train, crawl-precedents)
 8. 평가 시스템 기본 구현
 9. API 서버 기본 구현
 10. 문서화 (README, GUIDE)
+11. 데이터 품질 분석 도구 (analyze_pairs.py)
 
 ### 진행 중인 작업 (🚧)
 - 없음 (현재)
@@ -442,8 +451,9 @@
 1. FAISS 인덱싱 시스템 개선
 2. API 서버 기능 확장 (검색 엔드포인트)
 3. 평가 시스템 강화
-4. 테스트 코드 작성
-5. 배포 인프라 구축
+4. 학습 조기 종료 (Early Stopping)
+5. 테스트 코드 작성
+6. 배포 인프라 구축
 
 ---
 
