@@ -67,8 +67,13 @@
 - ✅ 판례 기반 쌍 생성 (`build_pairs_from_prec`)
 - ✅ Hard Negative 샘플링
 - ✅ Cross-positive 쌍 생성 (판례 → 법령/행정규칙)
+- ✅ Train/Valid/Test 자동 분할 (query_id 마지막 자리 기준)
 - 📋 쌍 생성 통계 및 품질 리포트
 - 📋 Negative 샘플링 전략 개선 (더 어려운 negative)
+- 📋 데이터 품질 점검 스크립트 (`analyze_pairs.py`)
+  - 쿼리 타입별 비율, positive/negative 개수 분포
+  - 법령 vs 행정규칙 비율, 텍스트 길이 분포 등 통계 리포트
+- 📋 전략별 모델 비교 실험 (법령만 / 행정규칙만 / 법령+행정규칙)
 
 ### 2.4 데이터 검증
 - ✅ ID 정합성 검증 (`validate_dataset.py`)

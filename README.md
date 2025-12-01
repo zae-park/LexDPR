@@ -125,6 +125,15 @@ poetry run lex-dpr crawl-precedents --max-pages 50
 # 또는
 poetry run lex-dpr crawl-precedents --start-page 51 --max-pages 50
 
+# 2-2. 질의-passage 쌍 생성 (train/valid/test split 포함)
+#     - law/admin/precedent passage를 이용해 pairs_train/valid/test를 생성합니다.
+poetry run lex-dpr gen-data
+# 결과 파일:
+#   - data/pairs_train.jsonl
+#   - data/pairs_train_valid.jsonl
+#   - data/pairs_train_test.jsonl
+#   - data/pairs_eval.jsonl (valid 세트 복사본, 학습/평가에 사용)
+
 # 3. 학습 실행 (정상 학습)
 poetry run lex-dpr train
 # 또는 설정 오버라이드:
@@ -136,6 +145,17 @@ poetry run lex-dpr train trainer.epochs=5 trainer.lr=3e-5
 poetry run lex-dpr smoke-train
 # 추가 하이퍼파라미터는 덮어쓸 수 있습니다 (test_run/epochs는 고정):
 poetry run lex-dpr smoke-train trainer.lr=3e-5
+
+# 4. 학습된 모델 평가
+#    MRR@k, NDCG@k, MAP@k, Precision/Recall@k 등 Retrieval 메트릭을 계산합니다.
+poetry run lex-dpr eval
+# 옵션 예시:
+poetry run lex-dpr eval \
+  --model checkpoint/lexdpr/bi_encoder \
+  --passages data/processed/merged_corpus.jsonl \
+  --eval-pairs data/pairs_eval.jsonl \
+  --k-values 1 3 5 10 \
+  --output eval_results.json
 ```
 
 
