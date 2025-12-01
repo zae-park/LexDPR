@@ -220,6 +220,7 @@ checkpoints/
 mlruns/
 wandb/
 embeds/
+checkpoint/
 *.npz
 *.npy
 checkpoint/  # org-mirror에서는 LFS로 추적, origin에서는 제외
