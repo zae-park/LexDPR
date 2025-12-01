@@ -21,6 +21,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 # 서브커맨드 모듈 import
 from lex_dpr.cli import train, embed, api, config
+from lex_dpr.crawler.crawl_precedents import PrecedentCrawler, REQUEST_DELAY
 
 logger = logging.getLogger("lex_dpr.cli")
 
@@ -52,6 +53,79 @@ def train_command():
         train.main()
     finally:
         sys.argv = original_argv
+
+
+@app.command("smoke-train")
+def smoke_train_command():
+    """
+    빠른 학습 SMOKE TEST 실행용 명령어.
+
+    - test_run=true 로 고정 (최대 100 iteration 또는 1 epoch)
+    - trainer.epochs=1 로 고정
+
+    예시:
+      poetry run lex-dpr smoke-train
+      poetry run lex-dpr smoke-train trainer.lr=3e-5
+    """
+    original_argv = sys.argv.copy()
+    try:
+        # 사용자가 추가로 넘긴 오버라이드 인자 확보
+        user_args = sys.argv[2:] if len(sys.argv) > 2 else []
+        # SMOKE TEST 모드에서 강제할 인자
+        forced_args = ["test_run=true", "trainer.epochs=1"]
+        # 사용자가 같은 키를 덮어쓰지 못하도록 필터링
+        filtered_user_args = [
+            a
+            for a in user_args
+            if not (a.startswith("test_run=") or a.startswith("trainer.epochs="))
+        ]
+        sys.argv = ["train"] + forced_args + filtered_user_args
+        train.main()
+    finally:
+        sys.argv = original_argv
+
+
+@app.command("crawl-precedents")
+def crawl_precedents_command(
+    output: str = typer.Option(
+        "data/precedents",
+        "--output",
+        "-o",
+        help="판례 JSON 파일을 저장할 디렉토리 (기본값: data/precedents)",
+    ),
+    max_pages: int = typer.Option(
+        0,
+        "--max-pages",
+        help="크롤링할 최대 페이지 수 (0이면 crawler 기본값 사용)",
+    ),
+    start_page: int = typer.Option(
+        1,
+        "--start-page",
+        help="시작 페이지 번호 (기본값: 1)",
+    ),
+    delay: float = typer.Option(
+        REQUEST_DELAY,
+        "--delay",
+        help=f"요청 간 지연 시간(초) (기본값: {REQUEST_DELAY})",
+    ),
+    max_workers: int = typer.Option(
+        4,
+        "--max-workers",
+        help="병렬 처리 워커 수 (기본값: 4)",
+    ),
+):
+    """
+    law.go.kr에서 판례 데이터를 크롤링합니다.
+
+    - PAGE 번호를 기준으로 페이지 범위를 지정할 수 있습니다.
+    - `--start-page`, `--max-pages` 옵션으로 범위를 제어합니다.
+
+    예시:
+      poetry run lex-dpr crawl-precedents --max-pages 10
+      poetry run lex-dpr crawl-precedents --start-page 5 --max-pages 20
+    """
+    crawler = PrecedentCrawler(output, delay=delay, max_workers=max_workers)
+    crawler.crawl(max_pages=max_pages or None, start_page=start_page)
 
 
 # Config 서브커맨드

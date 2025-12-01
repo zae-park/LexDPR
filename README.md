@@ -118,10 +118,24 @@ poetry install --extras "web-logging"
 # 2. 설정 파일 초기화
 poetry run lex-dpr config init
 
-# 3. 학습 실행
+# 2-1. (선택) 판례 크롤링 - law.go.kr에서 판례 JSON 수집
+#    PAGE 번호를 기준으로 시작 페이지와 최대 페이지 수를 지정할 수 있습니다.
+#    (첫 실행 시 데이터 준비용으로 권장)
+poetry run lex-dpr crawl-precedents --max-pages 50
+# 또는
+poetry run lex-dpr crawl-precedents --start-page 51 --max-pages 50
+
+# 3. 학습 실행 (정상 학습)
 poetry run lex-dpr train
 # 또는 설정 오버라이드:
 poetry run lex-dpr train trainer.epochs=5 trainer.lr=3e-5
+
+# 3-1. 빠른 SMOKE TEST 학습 실행
+#     - 최대 100 iteration 또는 1 epoch만 수행
+#     - 파이프라인이 정상 동작하는지 빠르게 확인할 때 사용
+poetry run lex-dpr smoke-train
+# 추가 하이퍼파라미터는 덮어쓸 수 있습니다 (test_run/epochs는 고정):
+poetry run lex-dpr smoke-train trainer.lr=3e-5
 ```
 
 
