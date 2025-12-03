@@ -160,21 +160,200 @@ poetry run lex-dpr eval \
 # 5. 하이퍼파라미터 튜닝 (WandB Sweep)
 # 5-1. 스윕 설정 파일 생성
 poetry run lex-dpr sweep init --output configs/my_sweep.yaml
+# SMOKE TEST 모드용 템플릿 생성:
+poetry run lex-dpr sweep init --output configs/smoke_sweep.yaml --smoke-test
 
 # 5-2. 설정 파일 편집 (탐색할 파라미터 범위 설정)
 # vim configs/my_sweep.yaml
+#
+# 예시 설정 (configs/my_sweep.yaml):
+# ---
+# method: bayes  # grid, random, bayes 중 선택
+# metric:
+#   name: eval/ndcg@10
+#   goal: maximize
+# parameters:
+#   trainer.lr:
+#     distribution: log_uniform_values
+#     values: [1e-6, 1e-5, 1e-4, 1e-3]
+#   trainer.temperature:
+#     distribution: uniform
+#     min: 0.01
+#     max: 0.2
+# fixed:
+#   trainer.epochs: 3
+#   data.pairs: data/pairs_train.jsonl
+#   data.passages: data/merged_corpus.jsonl
+# # 시간 기반 제어 (선택사항)
+# time_window: "1-8"  # 1시~8시에만 실행 (KST 기준)
+# timezone: "Asia/Seoul"
+# # Early termination 설정 (선택사항, 베이지안 탐색 수렴 시 자동 종료)
+# early_terminate:
+#   type: hyperband
+#   min_iter: 3
+#   max_iter: 27
+#   s: 2
 
 # 5-3. 스윕 시작 (WandB에 스윕 생성)
+# 방법 1: 스윕 생성 + 에이전트 자동 실행 (기본 동작)
+poetry run lex-dpr sweep
+# 또는
 poetry run lex-dpr sweep start --config configs/my_sweep.yaml
-# 출력된 스윕 ID를 복사하세요
 
-# 5-4. 에이전트 실행 (여러 머신에서 병렬 실행 가능)
+# 방법 2: 스윕만 생성하고 에이전트는 나중에 실행
+poetry run lex-dpr sweep --no-run-agent
+# 또는
+poetry run lex-dpr sweep start --config configs/my_sweep.yaml --no-run-agent
+
+# SMOKE TEST 모드로 실행 (test_run=true, epochs=1 자동 적용):
+poetry run lex-dpr sweep start --config configs/my_sweep.yaml --smoke-test
+
+# 5-4. 에이전트 실행 (여러 날짜/머신에서 나눠서 실행 가능)
+# 설정 파일에서 스윕 ID 자동 읽기:
+poetry run lex-dpr sweep agent --config configs/my_sweep.yaml
+
+# 스윕 ID 직접 지정:
 poetry run lex-dpr sweep agent <sweep-id>
+
+# 특정 횟수만 실행 (예: 오늘은 5개만):
+poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 5
+
+# 시간 기반 제어 (특정 시간대에만 실행):
+# CLI에서 직접 지정:
+poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --time-window "1-8" --count 10
+# 또는 설정 파일의 time_window 사용 (자동 적용)
+
+# 여러 날짜에 나눠서 실행하는 방법:
+# 첫 날: poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 10 --time-window "1-8"
+# 둘째 날: poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 10 --time-window "1-8"
+# 셋째 날: poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 10 --time-window "1-8"
+# (같은 스윕에 계속 참여하여 탐색 진행)
+
 # WandB 대시보드에서 진행 상황 확인:
 # https://wandb.ai/<entity>/<project>/sweeps/<sweep-id>
+
+# 스윕 종료 조건:
+# - 기본적으로 무한정 실행됨 (모든 파라미터 조합 탐색)
+# - --count 옵션으로 실행 횟수 제한 가능
+# - WandB 대시보드에서 수동으로 중단 가능
+# - 스윕 설정에서 early_terminate 설정 가능 (베이지안 탐색 시 최적 파라미터 찾으면 자동 종료)
+# - 시간 기반 제어: time_window 설정 시 지정된 시간 범위 밖에서는 자동 대기
 ```
 
+---
 
+## 🔧 WandB Sweep 하이퍼파라미터 튜닝 상세 가이드
+
+LexDPR은 WandB Sweep을 통한 하이퍼파라미터 자동 튜닝을 지원합니다. 여러 날짜에 나눠서 실행하거나, 특정 시간대에만 실행하는 등 유연한 스윕 관리가 가능합니다.
+
+### 주요 기능
+
+- **다양한 탐색 방법**: Grid Search, Random Search, Bayesian Optimization
+- **여러 날짜/머신에서 실행**: 같은 스윕에 여러 에이전트가 참여하여 병렬 탐색
+- **시간 기반 제어**: 특정 시간대에만 실행하도록 설정 가능 (예: 야간 시간대)
+- **Early Termination**: 베이지안 탐색 시 성능 개선이 없으면 자동 종료
+- **SMOKE TEST 모드**: 빠른 검증을 위한 축소 모드 지원
+
+### 스윕 설정 파일 예시
+
+```yaml
+# configs/my_sweep.yaml
+method: bayes  # grid, random, bayes 중 선택
+
+metric:
+  name: eval/ndcg@10
+  goal: maximize
+
+parameters:
+  trainer.lr:
+    distribution: log_uniform_values
+    values: [1e-6, 1e-5, 1e-4, 1e-3]
+  
+  trainer.temperature:
+    distribution: uniform
+    min: 0.01
+    max: 0.2
+  
+  trainer.gradient_accumulation_steps:
+    values: [4, 8, 16]
+
+fixed:
+  trainer.epochs: 3
+  data.pairs: data/pairs_train.jsonl
+  data.passages: data/merged_corpus.jsonl
+
+# 시간 기반 제어 (선택사항)
+time_window: "1-8"  # 1시~8시에만 실행 (KST 기준)
+timezone: "Asia/Seoul"
+
+# Early Termination 설정 (선택사항)
+early_terminate:
+  type: hyperband
+  min_iter: 3
+  max_iter: 27
+  s: 2
+```
+
+### 시간 기반 제어 사용법
+
+스윕 에이전트를 특정 시간대에만 실행하도록 설정할 수 있습니다. 이는 GPU 리소스를 효율적으로 사용하거나, 특정 시간대에만 학습을 진행하고 싶을 때 유용합니다.
+
+```bash
+# CLI에서 직접 지정
+poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --time-window "1-8" --count 10
+
+# 설정 파일에 time_window가 있으면 자동 적용
+poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 10
+```
+
+시간 범위 밖에서 실행하면, 에이전트는 다음 시작 시간까지 자동으로 대기합니다.
+
+### 여러 날짜에 나눠서 실행
+
+큰 스윕을 여러 날에 걸쳐 실행할 수 있습니다:
+
+```bash
+# 첫 날: 10개 실행
+poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 10 --time-window "1-8"
+
+# 둘째 날: 또 10개 실행 (같은 스윕에 계속 참여)
+poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 10 --time-window "1-8"
+
+# 셋째 날: 마지막 10개 실행
+poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 10 --time-window "1-8"
+```
+
+각 날짜마다 실행한 결과는 모두 같은 스윕에 누적되어 WandB 대시보드에서 확인할 수 있습니다.
+
+### Early Termination 설정
+
+베이지안 탐색(Bayesian Optimization)을 사용할 때, 성능 개선이 없으면 자동으로 스윕을 종료할 수 있습니다:
+
+```yaml
+early_terminate:
+  type: hyperband
+  min_iter: 3      # 최소 반복 횟수
+  max_iter: 27     # 최대 반복 횟수
+  s: 2             # Successive Halving 파라미터
+```
+
+이 설정은 WandB의 Hyperband 알고리즘을 사용하여 성능이 낮은 실행을 조기에 종료하고, 유망한 실행에 더 많은 리소스를 할당합니다.
+
+### SMOKE TEST 모드
+
+스윕 설정이 올바른지 빠르게 확인하고 싶을 때 SMOKE TEST 모드를 사용할 수 있습니다:
+
+```bash
+# SMOKE TEST 모드용 설정 파일 생성
+poetry run lex-dpr sweep init --output configs/smoke_sweep.yaml --smoke-test
+
+# SMOKE TEST 모드로 스윕 실행
+poetry run lex-dpr sweep start --config configs/smoke_sweep.yaml --smoke-test
+```
+
+SMOKE TEST 모드에서는 `test_run=true`, `epochs=1`이 자동으로 적용되어 빠르게 검증할 수 있습니다.
+
+---
 
 ## 🚀 사용 예시 (DEPRECATED)
 
