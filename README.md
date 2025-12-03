@@ -231,6 +231,44 @@ poetry run lex-dpr eval \
   --compare-output model_comparison_report.txt \
   --output model_comparison.json
 
+# 4-1. 임베딩 품질 시각화
+# ============================================
+# 학습된 모델의 임베딩 품질을 시각적으로 확인할 수 있습니다.
+# 
+# 시각화 타입:
+# - embedding-space: 임베딩 공간 시각화 (t-SNE/UMAP)
+# - similarity: Positive vs Negative 유사도 분포
+# - heatmap: 쿼리-패시지 유사도 히트맵
+# - comparison: 학습 전후 비교
+# ============================================
+
+# 모든 시각화 생성
+poetry run lex-dpr visualize \
+  --model checkpoint/lexdpr/bi_encoder \
+  --passages data/merged_corpus.jsonl \
+  --eval-pairs data/pairs_eval.jsonl \
+  --output visualizations
+
+# 특정 시각화만 생성
+poetry run lex-dpr visualize \
+  --model checkpoint/lexdpr/bi_encoder \
+  --type similarity \
+  --output visualizations
+
+# 학습 전후 비교 (학습 전 모델과 비교)
+poetry run lex-dpr visualize \
+  --model checkpoint/lexdpr/bi_encoder \
+  --model-before ko-simcse \
+  --type comparison \
+  --output visualizations
+
+# UMAP 대신 t-SNE 사용
+poetry run lex-dpr visualize \
+  --model checkpoint/lexdpr/bi_encoder \
+  --type space \
+  --method tsne \
+  --output visualizations
+
 # 5. 하이퍼파라미터 튜닝 (WandB Sweep)
 # ============================================
 # 📌 Sweep 명령어 정리:

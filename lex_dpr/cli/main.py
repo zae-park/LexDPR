@@ -682,6 +682,116 @@ def analyze_pairs_command(
     print_analysis_report(results, output_file=output)
 
 
+@app.command("visualize")
+def visualize_command(
+    model: str = typer.Option(..., "--model", "-m", help="모델 경로 (체크포인트 또는 HuggingFace 모델)"),
+    passages: str = typer.Option("data/merged_corpus.jsonl", "--passages", "-p", help="Passage corpus JSONL 경로"),
+    eval_pairs: str = typer.Option("data/pairs_eval.jsonl", "--eval-pairs", "-e", help="평가 쌍 JSONL 경로"),
+    output_dir: str = typer.Option("visualizations", "--output", "-o", help="시각화 결과 저장 디렉토리"),
+    method: str = typer.Option("umap", "--method", help="차원 축소 방법 (tsne 또는 umap)"),
+    visualization_type: str = typer.Option("all", "--type", "-t", help="시각화 타입 (all, space, similarity, heatmap, comparison)"),
+    model_before: Optional[str] = typer.Option(None, "--model-before", help="학습 전 모델 경로 (비교용)"),
+    n_samples: int = typer.Option(1000, "--n-samples", help="시각화할 샘플 수"),
+    peft_adapter: Optional[str] = typer.Option(None, "--peft-adapter", help="PEFT 어댑터 경로"),
+):
+    """
+    임베딩 품질 시각화
+    
+    다양한 방법으로 임베딩 품질을 시각화합니다:
+    - embedding-space: 임베딩 공간 시각화 (t-SNE/UMAP)
+    - similarity: Positive vs Negative 유사도 분포
+    - heatmap: 쿼리-패시지 유사도 히트맵
+    - comparison: 학습 전후 비교
+    
+    예시:
+      poetry run lex-dpr visualize --model checkpoint/lexdpr/bi_encoder
+      poetry run lex-dpr visualize --model checkpoint/lexdpr/bi_encoder --type similarity
+      poetry run lex-dpr visualize --model checkpoint/lexdpr/bi_encoder --model-before ko-simcse --type comparison
+    """
+    from lex_dpr.data import load_passages
+    from lex_dpr.models.encoders import BiEncoder
+    from lex_dpr.models.templates import TemplateMode
+    from lex_dpr.visualization import (
+        compare_embeddings_before_after,
+        visualize_embedding_space,
+        visualize_similarity_distribution,
+        visualize_similarity_heatmap,
+    )
+    
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    
+    # 모델 로드
+    logger.info(f"[시각화] 모델 로딩 중: {model}")
+    encoder = BiEncoder(
+        model,
+        template=TemplateMode.BGE,
+        normalize=True,
+        peft_adapter_path=peft_adapter,
+    )
+    
+    encoder_before = None
+    if model_before:
+        logger.info(f"[시각화] 학습 전 모델 로딩 중: {model_before}")
+        encoder_before = BiEncoder(
+            model_before,
+            template=TemplateMode.BGE,
+            normalize=True,
+        )
+    
+    # Passage 로드
+    logger.info(f"[시각화] Passage 로딩 중: {passages}")
+    passages_dict = load_passages(passages)
+    logger.info(f"[시각화] {len(passages_dict)}개 Passage 로드 완료")
+    
+    # 시각화 실행
+    if visualization_type in ["all", "space"]:
+        logger.info("[시각화] 임베딩 공간 시각화 중...")
+        visualize_embedding_space(
+            encoder=encoder,
+            passages=passages_dict,
+            eval_pairs_path=eval_pairs,
+            output_dir=output_dir_path,
+            method=method,
+            n_samples=n_samples,
+        )
+    
+    if visualization_type in ["all", "similarity"]:
+        logger.info("[시각화] 유사도 분포 시각화 중...")
+        visualize_similarity_distribution(
+            encoder=encoder,
+            passages=passages_dict,
+            eval_pairs_path=eval_pairs,
+            output_dir=output_dir_path,
+            n_samples=n_samples,
+        )
+    
+    if visualization_type in ["all", "heatmap"]:
+        logger.info("[시각화] 히트맵 시각화 중...")
+        visualize_similarity_heatmap(
+            encoder=encoder,
+            passages=passages_dict,
+            eval_pairs_path=eval_pairs,
+            output_dir=output_dir_path,
+        )
+    
+    if visualization_type in ["all", "comparison"]:
+        if encoder_before:
+            logger.info("[시각화] 학습 전후 비교 중...")
+            compare_embeddings_before_after(
+                encoder_before=encoder_before,
+                encoder_after=encoder,
+                passages=passages_dict,
+                eval_pairs_path=eval_pairs,
+                output_dir=output_dir_path,
+                n_samples=n_samples,
+            )
+        else:
+            logger.warning("⚠️ 학습 전 모델이 제공되지 않아 비교를 건너뜁니다. --model-before를 지정하세요.")
+    
+    logger.info(f"✅ 시각화 완료! 결과는 {output_dir_path}에 저장되었습니다.")
+
+
 def main():
     """메인 진입점"""
     app()
