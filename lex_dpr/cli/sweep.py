@@ -439,8 +439,9 @@ early_terminate:
 parameters:
   # 학습률 (넉넉한 범위)
   trainer.lr:
-    distribution: log_uniform_values
-    values: [1e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
+    distribution: log_uniform
+    min: 1e-6
+    max: 1e-3
   
   # Loss temperature (넉넉한 범위)
   trainer.temperature:
