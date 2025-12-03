@@ -372,7 +372,9 @@ class BiEncoderTrainer:
             logger.info(f"🧪 테스트 실행 모드: epochs를 1로 제한 (원래 설정: {self.cfg.trainer.epochs})")
         
         total_steps = steps_per_epoch * effective_epochs
-        warmup_steps = max(10, int(total_steps * 0.1))
+        # Warmup ratio 설정 (기본값: 0.1 = 10%)
+        warmup_ratio = float(getattr(self.cfg.trainer, "warmup_ratio", 0.1))
+        warmup_steps = max(10, int(total_steps * warmup_ratio))
 
         return TrainerArtifacts(
             loader=loader,
@@ -482,12 +484,31 @@ class BiEncoderTrainer:
             logger.info(f"Early Stopping 활성화: {early_stopping.metric_key} 모니터링 (patience={early_stopping.patience})")
         
         try:
+            # Optimizer 파라미터 구성
+            optimizer_params = {"lr": self.cfg.trainer.lr}
+            
+            # Weight decay 추가 (기본값: 0.01)
+            weight_decay = float(getattr(self.cfg.trainer, "weight_decay", 0.01))
+            if weight_decay > 0:
+                optimizer_params["weight_decay"] = weight_decay
+            
+            # AdamW beta 파라미터 추가 (선택사항)
+            if hasattr(self.cfg.trainer, "beta1"):
+                optimizer_params["betas"] = (
+                    float(self.cfg.trainer.beta1),
+                    float(getattr(self.cfg.trainer, "beta2", 0.999))
+                )
+            
+            # AdamW epsilon 추가 (선택사항)
+            if hasattr(self.cfg.trainer, "eps"):
+                optimizer_params["eps"] = float(self.cfg.trainer.eps)
+            
             self.model.fit(
                 train_objectives=[(self.artifacts.loader, self.artifacts.loss)],
                 epochs=effective_epochs,
                 warmup_steps=self.artifacts.warmup_steps,
                 scheduler="warmupcosine",
-                optimizer_params={"lr": self.cfg.trainer.lr},
+                optimizer_params=optimizer_params,
                 use_amp=bool(self.cfg.trainer.use_amp),
                 show_progress_bar=True,
                 evaluator=self.artifacts.evaluator,

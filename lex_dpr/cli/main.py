@@ -37,46 +37,45 @@ app = typer.Typer(
 
 
 # Train 서브커맨드
-@app.command("train")
-def train_command():
+train_app = typer.Typer(name="train", help="학습 관련 명령어")
+
+@train_app.command("init")
+def train_init_command(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="기존 파일이 있어도 덮어쓰기",
+    ),
+):
     """
-    모델 학습 실행
+    기본 학습 설정 파일 초기화
+    
+    configs/base.yaml, configs/data.yaml, configs/model.yaml 파일을 생성합니다.
     
     예시:
-      poetry run lex-dpr train
-      poetry run lex-dpr train trainer.epochs=5 trainer.lr=3e-5
+      poetry run lex-dpr train init
+      poetry run lex-dpr train init --force
     """
-    # train.py의 main 함수를 호출하되, sys.argv를 조작
-    original_argv = sys.argv.copy()
-    try:
-        # 'lex-dpr train' 부분을 제거하고 나머지만 전달
-        # sys.argv에서 'lex-dpr train' 이후의 모든 인자 가져오기
-        remaining_args = sys.argv[2:] if len(sys.argv) > 2 else []
-        sys.argv = ["train"] + remaining_args
-        train.main()
-    finally:
-        sys.argv = original_argv
+    from lex_dpr.cli import config
+    config.init_configs(force=force)
 
-
-@app.command("smoke-train")
-def smoke_train_command():
-    """
-    빠른 학습 SMOKE TEST 실행용 명령어.
-
-    - base.yaml을 기반으로 모든 기능을 활성화한 smoke-test용 config 자동 생성
-    - test_run=true 로 고정 (최대 100 iteration 또는 1 epoch)
-    - trainer.epochs=1 로 고정
-    - 모든 기능(learning rate scheduler, gradient clipping, early stopping 등) 활성화
-    - epoch와 step 수만 제한하여 빠른 동작 테스트 수행
-
-    예시:
-      poetry run lex-dpr smoke-train
-      poetry run lex-dpr smoke-train trainer.lr=3e-5
-    """
+def _run_smoke_train():
+    """smoke-train 실행 로직 (재사용)"""
+    # 먼저 기본 config 파일이 없으면 생성
+    from lex_dpr.cli import config as config_module
+    user_configs_dir = Path.cwd() / "configs"
+    base_path = user_configs_dir / "base.yaml"
+    
+    if not base_path.exists():
+        logger.info("기본 설정 파일이 없습니다. 자동 생성합니다...")
+        config_module.init_configs(force=False)
+        logger.info("")
+    
     original_argv = sys.argv.copy()
     try:
         # 사용자가 추가로 넘긴 오버라이드 인자 확보
-        user_args = sys.argv[2:] if len(sys.argv) > 2 else []
+        user_args = sys.argv[3:] if len(sys.argv) > 3 else []  # 'lex-dpr train smoke' 이후
         
         # SMOKE TEST 모드에서 강제할 인자
         # 1. 반복 횟수 제한 (epoch/step)
@@ -131,6 +130,61 @@ def smoke_train_command():
         train.main()
     finally:
         sys.argv = original_argv
+
+@train_app.command("smoke")
+def train_smoke_command():
+    """
+    빠른 학습 SMOKE TEST 실행용 명령어.
+
+    - 최소한의 config 파일을 자동 생성한 뒤 바로 실행
+    - test_run=true 로 고정 (최대 100 iteration 또는 1 epoch)
+    - trainer.epochs=1 로 고정
+    - 모든 기능(learning rate scheduler, gradient clipping, early stopping 등) 활성화
+    - epoch와 step 수만 제한하여 빠른 동작 테스트 수행
+
+    예시:
+      poetry run lex-dpr train smoke
+      poetry run lex-dpr train smoke trainer.lr=3e-5
+    """
+    _run_smoke_train()
+
+@train_app.callback(invoke_without_command=True)
+def train_command(ctx: typer.Context):
+    """
+    모델 학습 실행
+    
+    config 파일이 없으면 smoke 모드와 동일하게 동작합니다.
+    
+    예시:
+      poetry run lex-dpr train
+      poetry run lex-dpr train trainer.epochs=5 trainer.lr=3e-5
+    """
+    # 서브커맨드가 지정된 경우 (init, smoke) 그대로 진행
+    if ctx.invoked_subcommand is not None:
+        return
+    
+    # config 파일이 없으면 smoke 모드와 동일하게 동작
+    user_configs_dir = Path.cwd() / "configs"
+    base_path = user_configs_dir / "base.yaml"
+    
+    if not base_path.exists():
+        logger.info("설정 파일이 없습니다. smoke 모드로 실행합니다...")
+        logger.info("")
+        _run_smoke_train()
+        return
+    
+    # train.py의 main 함수를 호출하되, sys.argv를 조작
+    original_argv = sys.argv.copy()
+    try:
+        # 'lex-dpr train' 부분을 제거하고 나머지만 전달
+        # sys.argv에서 'lex-dpr train' 이후의 모든 인자 가져오기
+        remaining_args = sys.argv[2:] if len(sys.argv) > 2 else []
+        sys.argv = ["train"] + remaining_args
+        train.main()
+    finally:
+        sys.argv = original_argv
+
+app.add_typer(train_app)
 
 
 @app.command("crawl-precedents")

@@ -115,6 +115,175 @@ app = typer.Typer(
 )
 
 
+def _run_sweep_impl(
+    config_path: Path,
+    smoke_test: bool,
+    run_agent: bool,
+):
+    """sweep 실행 로직 (재사용)"""
+    try:
+        import wandb
+    except ImportError:
+        logger.error("wandb가 설치되지 않았습니다. 'poetry install --extras wandb'로 설치하세요.")
+        raise typer.Exit(1)
+    
+    if not config_path.exists():
+        logger.error(f"설정 파일을 찾을 수 없습니다: {config_path}")
+        raise typer.Exit(1)
+    
+    sweep_config = OmegaConf.load(config_path)
+    
+    if smoke_test:
+        logger.info("🧪 SMOKE TEST 모드로 실행합니다.")
+        if "fixed" not in sweep_config:
+            sweep_config["fixed"] = {}
+        sweep_config["fixed"]["test_run"] = True
+        sweep_config["fixed"]["trainer.epochs"] = 1
+        if "trainer.eval_steps" not in sweep_config.get("fixed", {}):
+            sweep_config["fixed"]["trainer.eval_steps"] = 50
+    
+    wandb_project = sweep_config.get("project", "lexdpr")
+    wandb_entity = sweep_config.get("entity", None)
+    if smoke_test:
+        wandb_project = f"{wandb_project}-smoke-test"
+    
+    # OmegaConf 객체를 일반 Python 딕셔너리로 변환
+    method = _convert_to_dict(sweep_config.get("method", "random"))
+    metric = _convert_to_dict(sweep_config.get("metric", {"name": "eval/ndcg@10", "goal": "maximize"}))
+    parameters = _convert_to_dict(sweep_config.get("parameters", {}))
+    
+    sweep_dict = {
+        "method": method,
+        "metric": metric,
+        "parameters": parameters or {},
+    }
+    
+    # Early termination 설정 추가
+    early_terminate = sweep_config.get("early_terminate")
+    if early_terminate:
+        early_terminate_dict = _convert_to_dict(early_terminate)
+        sweep_dict["early_terminate"] = early_terminate_dict
+        logger.info(f"Early termination 설정: {early_terminate_dict}")
+    
+    fixed_params = _convert_to_dict(sweep_config.get("fixed", {}))
+    if fixed_params:
+        logger.info(f"고정 파라미터 적용: {list(fixed_params.keys())}")
+        for key, value in fixed_params.items():
+            if key not in sweep_dict["parameters"]:
+                sweep_dict["parameters"][key] = {"value": _convert_to_dict(value)}
+    
+    logger.info(f"WandB 프로젝트: {wandb_project}")
+    if wandb_entity:
+        logger.info(f"WandB 엔티티: {wandb_entity}")
+    logger.info("스윕 생성 중...")
+    
+    sweep_id = wandb.sweep(sweep_dict, project=wandb_project, entity=wandb_entity)
+    
+    # 스윕 ID를 설정 파일에 저장
+    sweep_config["sweep_id"] = sweep_id
+    OmegaConf.save(sweep_config, config_path)
+    logger.info(f"스윕 ID가 설정 파일에 저장되었습니다: {config_path}")
+    
+    logger.info("")
+    logger.info("=" * 80)
+    logger.info(f"✅ 스윕 생성 완료!")
+    logger.info(f"스윕 ID: {sweep_id}")
+    logger.info("")
+    logger.info("다음 단계:")
+    logger.info(f"  poetry run lex-dpr sweep agent --config {config_path}")
+    logger.info(f"  또는")
+    logger.info(f"  poetry run lex-dpr sweep agent {sweep_id}")
+    logger.info("")
+    logger.info(f"WandB 대시보드: https://wandb.ai/{wandb_entity or 'your-entity'}/{wandb_project}/sweeps/{sweep_id}")
+    logger.info("=" * 80)
+    
+    # 에이전트 자동 실행
+    if run_agent:
+        logger.info("")
+        logger.info("에이전트를 시작합니다...")
+        logger.info("")
+        
+        # 설정 파일에서 시간 제한 읽기
+        time_window_config = sweep_config.get("time_window")
+        time_window_tuple = None
+        if time_window_config:
+            if isinstance(time_window_config, str):
+                parts = time_window_config.split("-")
+                if len(parts) == 2:
+                    try:
+                        start_hour = int(parts[0].strip())
+                        end_hour = int(parts[1].strip())
+                        if 0 <= start_hour < 24 and 0 <= end_hour <= 24:
+                            time_window_tuple = (start_hour, end_hour)
+                            logger.info(f"⏰ 시간 제한 설정: {start_hour}시~{end_hour}시 (KST)")
+                    except ValueError:
+                        pass
+            elif isinstance(time_window_config, (list, tuple)) and len(time_window_config) == 2:
+                time_window_tuple = tuple(time_window_config)
+                logger.info(f"⏰ 시간 제한 설정: {time_window_tuple[0]}시~{time_window_tuple[1]}시 (KST)")
+        
+        timezone_config = sweep_config.get("timezone", "Asia/Seoul")
+        
+        # 에이전트 실행 내부 함수 호출
+        _run_agent_impl(sweep_id=sweep_id, count=None, time_window=time_window_tuple, timezone=timezone_config)
+    else:
+        logger.info("")
+        logger.info("에이전트를 실행하려면:")
+        logger.info(f"  poetry run lex-dpr sweep agent --config {config_path}")
+        logger.info(f"  또는")
+        logger.info(f"  poetry run lex-dpr sweep agent {sweep_id}")
+    
+    return sweep_id
+
+@app.command("smoke")
+def sweep_smoke_command(
+    config: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="스윕 설정 파일 경로 (없으면 자동 생성)",
+    ),
+    run_agent: bool = typer.Option(
+        True,
+        "--run-agent/--no-run-agent",
+        help="스윕 생성 후 에이전트 자동 실행 (기본값: True)",
+    ),
+):
+    """
+    빠른 Sweep SMOKE TEST 실행용 명령어.
+    
+    - 최소한의 sweep config 파일을 자동 생성한 뒤 바로 실행
+    - test_run=true, epochs=1로 제한하여 빠른 테스트
+    
+    예시:
+      poetry run lex-dpr sweep smoke
+      poetry run lex-dpr sweep smoke --no-run-agent
+    """
+    # 설정 파일이 없으면 자동 생성
+    if config is None:
+        config = "configs/smoke_sweep.yaml"
+    
+    config_path = Path(config)
+    
+    if not config_path.exists():
+        logger.info("설정 파일이 없습니다. SMOKE TEST 모드용 설정 파일을 자동 생성합니다...")
+        logger.info("")
+        sweep_init(output=str(config_path), smoke_test=True)
+        logger.info("")
+    else:
+        logger.info(f"기존 설정 파일 사용: {config_path}")
+        logger.info("")
+    
+    # 스윕 시작
+    logger.info("스윕을 시작합니다...")
+    logger.info("")
+    
+    try:
+        _run_sweep_impl(config_path, smoke_test=True, run_agent=run_agent)
+    except Exception as e:
+        logger.error(f"스윕 시작 실패: {e}")
+        raise typer.Exit(1)
+
 @app.callback(invoke_without_command=True)
 def sweep_main(
     ctx: typer.Context,
@@ -123,11 +292,6 @@ def sweep_main(
         "--config",
         "-c",
         help="스윕 설정 파일 경로 (없으면 자동 생성)",
-    ),
-    smoke_test: bool = typer.Option(
-        True,
-        "--smoke-test/--no-smoke-test",
-        help="SMOKE TEST 모드로 실행 (기본값: True)",
     ),
     run_agent: bool = typer.Option(
         True,
@@ -138,7 +302,7 @@ def sweep_main(
     """
     WandB Sweep을 실행합니다.
     
-    설정 파일이 없으면 자동으로 SMOKE TEST 모드용 설정 파일을 생성하고 실행합니다.
+    config 파일이 없으면 smoke 모드와 동일하게 동작합니다.
     기본적으로 스윕 생성 후 에이전트를 자동으로 실행합니다.
     
     여러 날짜에 나눠서 실행하려면:
@@ -153,149 +317,36 @@ def sweep_main(
     예시:
       poetry run lex-dpr sweep
       poetry run lex-dpr sweep --config configs/my_sweep.yaml
-      poetry run lex-dpr sweep --no-smoke-test
       poetry run lex-dpr sweep --no-run-agent  # 스윕만 생성하고 에이전트는 실행하지 않음
     """
-    # 서브커맨드가 지정된 경우 (init, start, agent 등) 그대로 진행
+    # 서브커맨드가 지정된 경우 (init, smoke, start, agent 등) 그대로 진행
     if ctx.invoked_subcommand is not None:
         return
     
-    # 설정 파일이 없으면 자동 생성
+    # 설정 파일이 없으면 smoke 모드와 동일하게 동작
     if config is None:
-        config = "configs/smoke_sweep.yaml"
-        config_path = Path(config)
-        
-        if not config_path.exists():
-            logger.info("설정 파일이 없습니다. SMOKE TEST 모드용 설정 파일을 자동 생성합니다...")
-            logger.info("")
-            
-            # init 함수 호출하여 설정 파일 생성
-            sweep_init(output=str(config_path), smoke_test=smoke_test)
-            logger.info("")
-        else:
-            logger.info(f"기존 설정 파일 사용: {config_path}")
-            logger.info("")
+        config = "configs/sweep.yaml"
+    
+    config_path = Path(config)
+    
+    if not config_path.exists():
+        logger.info("설정 파일이 없습니다. smoke 모드로 실행합니다...")
+        logger.info("")
+        # smoke 모드로 실행
+        sweep_smoke_command(config=None, run_agent=run_agent)
+        return
+    
+    logger.info(f"기존 설정 파일 사용: {config_path}")
+    logger.info("")
     
     # 스윕 시작
     logger.info("스윕을 시작합니다...")
     logger.info("")
     
     try:
-        # 내부 구현 함수 직접 호출
-        import wandb
-        config_path = Path(config)
-        if not config_path.exists():
-            logger.error(f"설정 파일을 찾을 수 없습니다: {config_path}")
-            raise typer.Exit(1)
-        
-        sweep_config = OmegaConf.load(config_path)
-        
-        if smoke_test:
-            logger.info("🧪 SMOKE TEST 모드로 실행합니다.")
-            if "fixed" not in sweep_config:
-                sweep_config["fixed"] = {}
-            sweep_config["fixed"]["test_run"] = True
-            sweep_config["fixed"]["trainer.epochs"] = 1
-            if "trainer.eval_steps" not in sweep_config.get("fixed", {}):
-                sweep_config["fixed"]["trainer.eval_steps"] = 50
-        
-        wandb_project = sweep_config.get("project", "lexdpr")
-        wandb_entity = sweep_config.get("entity", None)
-        if smoke_test:
-            wandb_project = f"{wandb_project}-smoke-test"
-        
-        # OmegaConf 객체를 일반 Python 딕셔너리로 변환
-        method = _convert_to_dict(sweep_config.get("method", "random"))
-        metric = _convert_to_dict(sweep_config.get("metric", {"name": "eval/ndcg@10", "goal": "maximize"}))
-        parameters = _convert_to_dict(sweep_config.get("parameters", {}))
-        
-        sweep_dict = {
-            "method": method,
-            "metric": metric,
-            "parameters": parameters or {},
-        }
-        
-        # Early termination 설정 추가
-        early_terminate = sweep_config.get("early_terminate")
-        if early_terminate:
-            early_terminate_dict = _convert_to_dict(early_terminate)
-            sweep_dict["early_terminate"] = early_terminate_dict
-            logger.info(f"Early termination 설정: {early_terminate_dict}")
-        
-        fixed_params = _convert_to_dict(sweep_config.get("fixed", {}))
-        if fixed_params:
-            logger.info(f"고정 파라미터 적용: {list(fixed_params.keys())}")
-            for key, value in fixed_params.items():
-                if key not in sweep_dict["parameters"]:
-                    sweep_dict["parameters"][key] = {"value": _convert_to_dict(value)}
-        
-        logger.info(f"WandB 프로젝트: {wandb_project}")
-        if wandb_entity:
-            logger.info(f"WandB 엔티티: {wandb_entity}")
-        logger.info("스윕 생성 중...")
-        
-        sweep_id = wandb.sweep(sweep_dict, project=wandb_project, entity=wandb_entity)
-        
-        # 스윕 ID를 설정 파일에 저장
-        sweep_config["sweep_id"] = sweep_id
-        OmegaConf.save(sweep_config, config_path)
-        logger.info(f"스윕 ID가 설정 파일에 저장되었습니다: {config_path}")
-        
-        logger.info("")
-        logger.info("=" * 80)
-        logger.info(f"✅ 스윕 생성 완료!")
-        logger.info(f"스윕 ID: {sweep_id}")
-        logger.info("")
-        logger.info("다음 단계:")
-        logger.info(f"  poetry run lex-dpr sweep agent --config {config}")
-        logger.info(f"  또는")
-        logger.info(f"  poetry run lex-dpr sweep agent {sweep_id}")
-        logger.info("")
-        logger.info(f"WandB 대시보드: https://wandb.ai/{wandb_entity or 'your-entity'}/{wandb_project}/sweeps/{sweep_id}")
-        logger.info("=" * 80)
-        
-        # 에이전트 자동 실행
-        if run_agent:
-            logger.info("")
-            logger.info("에이전트를 시작합니다...")
-            logger.info("")
-            
-            # 설정 파일에서 시간 제한 읽기
-            time_window_config = sweep_config.get("time_window")
-            time_window_tuple = None
-            if time_window_config:
-                if isinstance(time_window_config, str):
-                    parts = time_window_config.split("-")
-                    if len(parts) == 2:
-                        try:
-                            start_hour = int(parts[0].strip())
-                            end_hour = int(parts[1].strip())
-                            if 0 <= start_hour < 24 and 0 <= end_hour <= 24:
-                                time_window_tuple = (start_hour, end_hour)
-                        except ValueError:
-                            pass
-                elif isinstance(time_window_config, (list, tuple)) and len(time_window_config) == 2:
-                    time_window_tuple = tuple(time_window_config)
-            
-            timezone_config = sweep_config.get("timezone", "Asia/Seoul")
-            
-            # 에이전트 실행 내부 함수 호출
-            _run_agent_impl(sweep_id=sweep_id, count=None, time_window=time_window_tuple, timezone=timezone_config)
-        else:
-            logger.info("")
-            logger.info("에이전트를 실행하려면:")
-            logger.info(f"  poetry run lex-dpr sweep agent --config {config}")
-            logger.info(f"  또는")
-            logger.info(f"  poetry run lex-dpr sweep agent {sweep_id}")
-        
-        return sweep_id
+        _run_sweep_impl(config_path, smoke_test=False, run_agent=run_agent)
     except Exception as e:
         logger.error(f"스윕 시작 실패: {e}")
-        logger.info("")
-        logger.info("수동으로 실행하려면:")
-        logger.info(f"  poetry run lex-dpr sweep start --config {config}")
-        if smoke_test:
-            logger.info(f"  poetry run lex-dpr sweep start --config {config} --smoke-test")
         raise typer.Exit(1)
 
 
@@ -359,28 +410,151 @@ parameters:
 """
 
 
+def _get_sweep_preset_template() -> str:
+    """넉넉한 범위의 스윕 설정 템플릿 반환"""
+    return """# WandB Sweep 설정 파일 (넉넉한 범위)
+# 이 파일은 WandB Sweep의 하이퍼파라미터 탐색 범위를 정의합니다.
+# 넉넉한 범위로 설정되어 있어 다양한 하이퍼파라미터 조합을 탐색할 수 있습니다.
+
+# 프로그램 경로 (학습 스크립트)
+program: lex_dpr/cli/train.py
+
+# 탐색 방법: grid, random, bayes
+# bayes: Bayesian optimization (효율적, 권장)
+method: bayes
+
+# 최적화할 메트릭
+metric:
+  name: eval/ndcg@10  # WandB에 로깅되는 메트릭 이름
+  goal: maximize       # maximize 또는 minimize
+
+# Early termination 설정 (Bayesian search에서 수렴 시 자동 종료)
+early_terminate:
+  type: hyperband
+  min_iter: 3  # 최소 3번 평가 후 종료 판단
+  max_iter: 10  # 최대 10번 평가 후 종료
+  s: 2  # Successive halving factor
+
+# 탐색할 하이퍼파라미터 (넉넉한 범위)
+parameters:
+  # 학습률 (넉넉한 범위)
+  trainer.lr:
+    distribution: log_uniform_values
+    values: [1e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
+  
+  # Loss temperature (넉넉한 범위)
+  trainer.temperature:
+    distribution: uniform
+    min: 0.01
+    max: 0.3
+  
+  # Optimizer weight decay (넉넉한 범위, continuous)
+  trainer.weight_decay:
+    distribution: uniform
+    min: 0.0
+    max: 0.1
+  
+  # Warmup ratio (넉넉한 범위, continuous)
+  trainer.warmup_ratio:
+    distribution: uniform
+    min: 0.0
+    max: 0.3
+  
+  # Gradient accumulation steps (넉넉한 범위)
+  trainer.gradient_accumulation_steps:
+    values: [2, 4, 8, 16, 32]
+  
+  # Gradient clipping (넉넉한 범위, continuous)
+  trainer.gradient_clip_norm:
+    distribution: uniform
+    min: 0.0
+    max: 5.0
+  
+  # LoRA rank (integer, categorical 유지)
+  model.peft.r:
+    values: [4, 8, 16, 32, 64]
+  
+  # LoRA alpha (integer, categorical 유지)
+  model.peft.alpha:
+    values: [8, 16, 32, 64, 128]
+  
+  # LoRA dropout (넉넉한 범위, continuous)
+  model.peft.dropout:
+    distribution: uniform
+    min: 0.0
+    max: 0.3
+  
+  # 배치 크기 (integer, categorical 유지)
+  data.batches.bi:
+    values: [1, 2, 4, 8, 16]
+  
+  # 데이터 증폭 (integer, categorical 유지)
+  data.multiply:
+    values: [0, 1, 2, 3]
+
+# 고정 파라미터 (모든 스윕 실행에서 동일하게 사용)
+fixed:
+  # 학습 설정
+  trainer.epochs: 5  # 실제 학습에서는 충분한 에포크 필요
+  trainer.eval_steps: 300  # 평가 주기
+  trainer.k: 10  # 평가 시 top-k
+  trainer.k_values: [1, 3, 5, 10]  # 평가 메트릭 k 값들
+  
+  # Early Stopping 설정 (학습 효율성)
+  trainer.early_stopping.enabled: true
+  trainer.early_stopping.metric: "cosine_ndcg@10"
+  trainer.early_stopping.patience: 3
+  trainer.early_stopping.min_delta: 0.001
+  trainer.early_stopping.mode: "max"
+  trainer.early_stopping.restore_best_weights: true
+  
+  # 모델 설정
+  model.bi_model: ko-simcse  # 기본 모델 고정
+  model.use_bge_template: true  # BGE 템플릿 사용
+  model.max_len: 128  # 시퀀스 길이
+  model.peft.enabled: true  # LoRA 활성화
+  model.peft.target_modules: ["query", "value"]  # LoRA target modules 고정
+  
+  # 데이터 설정
+  data.pairs: data/pairs_train.jsonl
+  data.passages: data/merged_corpus.jsonl
+  
+  # 기타 설정
+  test_run: false  # 실제 학습 모드
+  seed: 42  # 재현성을 위한 시드
+
+# WandB 프로젝트 설정 (선택사항)
+project: lexdpr
+# entity: your-wandb-entity  # WandB 엔티티 (선택사항)
+
+# 시간 제한 설정 (기본값: 새벽 1시~8시 KST)
+# 여러 날짜에 나눠서 실행할 때 사용
+time_window: "1-8"  # 1시~8시에만 실행 (KST 기준)
+timezone: "Asia/Seoul"
+"""
+
 @app.command("init")
 def sweep_init(
     output: str = typer.Option(
-        "configs/smoke_sweep.yaml",
+        "configs/sweep.yaml",
         "--output",
         "-o",
-        help="생성할 스윕 설정 파일 경로 (기본값: configs/smoke_sweep.yaml)",
+        help="생성할 스윕 설정 파일 경로 (기본값: configs/sweep.yaml)",
     ),
     smoke_test: bool = typer.Option(
-        True,
+        False,
         "--smoke-test/--no-smoke-test",
-        help="SMOKE TEST 모드용 템플릿 생성 (기본값: True)",
+        help="SMOKE TEST 모드용 템플릿 생성 (기본값: False)",
     ),
 ):
     """
     WandB Sweep 설정 파일 템플릿을 생성합니다.
     
-    기본값으로 SMOKE TEST 모드용 설정 파일을 생성합니다.
+    기본 템플릿을 생성합니다.
     
     예시:
       poetry run lex-dpr sweep init
-      poetry run lex-dpr sweep init --output configs/my_sweep.yaml --no-smoke-test
+      poetry run lex-dpr sweep init --output configs/my_sweep.yaml --smoke-test
     """
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -402,7 +576,78 @@ def sweep_init(
     logger.info("")
     logger.info("다음 단계:")
     logger.info("  1. 설정 파일을 편집하여 탐색할 파라미터 범위를 설정하세요")
-    logger.info(f"  2. poetry run lex-dpr sweep start --config {output_path} 로 스윕을 시작하세요")
+    logger.info(f"  2. poetry run lex-dpr sweep --config {output_path} 로 스윕을 시작하세요")
+
+@app.command("preset")
+def sweep_preset(
+    output: str = typer.Option(
+        "configs/sweep.yaml",
+        "--output",
+        "-o",
+        help="생성할 스윕 설정 파일 경로 (기본값: configs/sweep.yaml)",
+    ),
+    run: bool = typer.Option(
+        True,
+        "--run/--no-run",
+        help="설정 파일 생성 후 바로 스윕 실행 (기본값: True)",
+    ),
+    run_agent: bool = typer.Option(
+        True,
+        "--run-agent/--no-run-agent",
+        help="스윕 생성 후 에이전트 자동 실행 (기본값: True)",
+    ),
+):
+    """
+    넉넉한 범위의 WandB Sweep 설정 파일을 생성하고 바로 실행합니다.
+    
+    넉넉한 하이퍼파라미터 범위로 설정되어 있어 다양한 조합을 탐색할 수 있습니다.
+    생성된 설정 파일에는 time_window가 1-8시(KST)로 자동 설정됩니다.
+    
+    예시:
+      poetry run lex-dpr sweep preset
+      poetry run lex-dpr sweep preset --output configs/my_sweep.yaml
+      poetry run lex-dpr sweep preset --no-run  # 생성만 하고 실행하지 않음
+    """
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    template = _get_sweep_preset_template()
+    
+    if output_path.exists():
+        logger.warning(f"파일이 이미 존재합니다: {output_path}")
+        response = typer.prompt("덮어쓰시겠습니까? (y/N)", default="N")
+        if response.lower() != "y":
+            logger.info("취소되었습니다.")
+            return
+    
+    output_path.write_text(template, encoding="utf-8")
+    logger.info(f"✅ 넉넉한 범위의 스윕 설정 파일 생성 완료: {output_path}")
+    logger.info("")
+    logger.info("📋 포함된 하이퍼파라미터 범위:")
+    logger.info("  - 학습률: 1e-6 ~ 1e-3 (log_uniform)")
+    logger.info("  - Temperature: 0.01 ~ 0.3 (uniform)")
+    logger.info("  - Weight Decay: 0.0 ~ 0.1 (uniform)")
+    logger.info("  - Warmup Ratio: 0.0 ~ 0.3 (uniform)")
+    logger.info("  - Gradient Accumulation Steps: [2, 4, 8, 16, 32]")
+    logger.info("  - Gradient Clipping: 0.0 ~ 5.0 (uniform)")
+    logger.info("  - LoRA rank: [4, 8, 16, 32, 64]")
+    logger.info("  - LoRA alpha: [8, 16, 32, 64, 128]")
+    logger.info("  - LoRA dropout: 0.0 ~ 0.3 (uniform)")
+    logger.info("  - 배치 크기: [1, 2, 4, 8, 16]")
+    logger.info("  - 데이터 증폭: [0, 1, 2, 3]")
+    logger.info("")
+    
+    if run:
+        logger.info("스윕을 시작합니다...")
+        logger.info("")
+        try:
+            _run_sweep_impl(output_path, smoke_test=False, run_agent=run_agent)
+        except Exception as e:
+            logger.error(f"스윕 시작 실패: {e}")
+            raise typer.Exit(1)
+    else:
+        logger.info("다음 단계:")
+        logger.info(f"  poetry run lex-dpr sweep --config {output_path} 로 스윕을 시작하세요")
 
 
 @app.command("start")
@@ -640,10 +885,10 @@ def _run_agent_impl(
 def sweep_agent(
     sweep_id: Optional[str] = typer.Argument(None, help="WandB 스윕 ID (없으면 설정 파일에서 읽음)"),
     config: Optional[str] = typer.Option(
-        None,
+        "configs/sweep.yaml",
         "--config",
         "-c",
-        help="스윕 설정 파일 경로 (sweep_id가 없을 때 사용)",
+        help="스윕 설정 파일 경로 (sweep_id가 없을 때 사용, 기본값: configs/sweep.yaml)",
     ),
     count: Optional[int] = typer.Option(
         None,
@@ -702,31 +947,35 @@ def sweep_agent(
     # sweep_id가 없으면 설정 파일에서 읽기
     if sweep_id is None:
         if config is None:
-            logger.error("sweep_id 또는 --config 옵션이 필요합니다.")
-            raise typer.Exit(1)
+            # 기본값으로 configs/sweep.yaml 사용
+            config = "configs/sweep.yaml"
+        
         config_path = Path(config)
         if not config_path.exists():
             logger.error(f"설정 파일을 찾을 수 없습니다: {config_path}")
+            logger.error("먼저 'poetry run lex-dpr sweep preset'으로 스윕 설정 파일을 생성하세요.")
             raise typer.Exit(1)
+        
         sweep_config = OmegaConf.load(config_path)
         sweep_id = sweep_config.get("sweep_id")
         if sweep_id is None:
             logger.error(f"설정 파일에 sweep_id가 없습니다: {config_path}")
+            logger.error("먼저 'poetry run lex-dpr sweep --config {config_path}' 또는 'poetry run lex-dpr sweep preset'으로 스윕을 생성하세요.")
             raise typer.Exit(1)
         
-        # 설정 파일에서 time_window와 timezone 읽기
-        if time_window is None:
-            time_window_config = sweep_config.get("time_window")
-            if time_window_config:
-                if isinstance(time_window_config, str):
-                    time_window = time_window_config
-                elif isinstance(time_window_config, (list, tuple)) and len(time_window_config) == 2:
-                    time_window = f"{time_window_config[0]}-{time_window_config[1]}"
+        logger.info(f"설정 파일에서 sweep_id를 읽었습니다: {sweep_id}")
         
-        if timezone == "Asia/Seoul":  # 기본값이면 설정 파일에서 읽기
-            timezone_config = sweep_config.get("timezone")
-            if timezone_config:
-                timezone = timezone_config
+        # 설정 파일에서 time_window와 timezone 읽기 (설정 파일 우선)
+        time_window_config = sweep_config.get("time_window")
+        if time_window_config:
+            if isinstance(time_window_config, str):
+                time_window = time_window_config  # CLI 옵션보다 설정 파일 우선
+            elif isinstance(time_window_config, (list, tuple)) and len(time_window_config) == 2:
+                time_window = f"{time_window_config[0]}-{time_window_config[1]}"
+        
+        timezone_config = sweep_config.get("timezone")
+        if timezone_config:
+            timezone = timezone_config  # CLI 옵션보다 설정 파일 우선
     
     logger.info("=" * 80)
     logger.info("🔍 WandB Sweep 에이전트 시작")

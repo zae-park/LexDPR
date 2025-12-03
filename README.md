@@ -134,20 +134,45 @@ poetry run lex-dpr gen-data
 #   - data/pairs_train_test.jsonl
 #   - data/pairs_eval.jsonl (valid 세트 복사본, 학습/평가에 사용)
 
-# 3. 학습 실행 (정상 학습)
+# 3. 학습 명령어 정리
+# ============================================
+# 📌 명령어별 용도 요약:
+# 
+# 1. train: 지정된 파라미터로 학습
+#    - configs/base.yaml 기반으로 학습
+#    - 모든 기능을 수동으로 설정 가능
+#    - 실제 학습 시 사용
+#
+# 2. smoke-train: 모든 기능 활성화 + 반복 파라미터만 제한
+#    - 모든 기능 자동 활성화 (LR scheduler, gradient clipping, early stopping)
+#    - test_run=true, epochs=1로 제한하여 빠른 테스트
+#    - 파이프라인 동작 확인용
+#
+# 3. sweep: 지정된 파라미터 범위를 하이퍼파라미터 탐색
+#    - configs/sweep.yaml 기반으로 실제 하이퍼파라미터 탐색
+#    - WandB Sweep을 통한 Bayesian optimization
+#    - 실제 최적화 시 사용
+#
+# 4. smoke-sweep: 최소한의 기능 + 최소한의 반복으로 sweep 테스트
+#    - sweep 명령어에 --smoke-test 플래그 사용
+#    - 또는 configs/smoke_sweep.yaml 사용
+#    - Sweep 파이프라인 동작 확인용
+# ============================================
+
+# 3-1. 정상 학습 (train)
+#     - configs/base.yaml 기반으로 학습
+#     - 모든 하이퍼파라미터를 수동으로 설정
 poetry run lex-dpr train
 # 또는 설정 오버라이드:
 poetry run lex-dpr train trainer.epochs=5 trainer.lr=3e-5
 
-# 3-1. 빠른 SMOKE TEST 학습 실행
-#     - base.yaml을 기반으로 모든 기능을 활성화한 smoke-test용 config 자동 생성
-#     - 최대 100 iteration 또는 1 epoch만 수행
-#     - 파이프라인이 정상 동작하는지 빠르게 확인할 때 사용
+# 3-2. 빠른 SMOKE TEST 학습 (smoke-train)
 #     - 모든 기능 자동 활성화:
 #       * Learning Rate Scheduler: Warm-up + Cosine Annealing
 #       * Gradient Clipping: 활성화 (max_norm=1.0)
 #       * Early Stopping: 활성화 (patience=2)
-#     - epoch와 step 수만 제한하여 빠른 동작 테스트 수행
+#     - 반복 파라미터만 제한: test_run=true, epochs=1
+#     - 파이프라인 동작 확인용
 poetry run lex-dpr smoke-train
 # 추가 하이퍼파라미터는 덮어쓸 수 있습니다 (test_run/epochs/기능 활성화는 고정):
 poetry run lex-dpr smoke-train trainer.lr=3e-5
@@ -207,12 +232,37 @@ poetry run lex-dpr eval \
   --output model_comparison.json
 
 # 5. 하이퍼파라미터 튜닝 (WandB Sweep)
-# 5-1. 스윕 설정 파일 생성
+# ============================================
+# 📌 Sweep 명령어 정리:
+#
+# 1. sweep (실제): configs/sweep.yaml 기반으로 실제 하이퍼파라미터 탐색
+#    - Bayesian optimization으로 최적 파라미터 탐색
+#    - 여러 날짜에 나눠서 실행 가능
+#
+# 2. sweep (smoke-test): 최소한의 기능 + 최소한의 반복으로 sweep 테스트
+#    - --smoke-test 플래그 사용 또는 configs/smoke_sweep.yaml 사용
+#    - Sweep 파이프라인 동작 확인용
+# ============================================
+
+# 5-1. 실제 하이퍼파라미터 탐색 (sweep)
+#     - configs/sweep.yaml 기반으로 실제 하이퍼파라미터 탐색
+#     - Bayesian optimization으로 최적 파라미터 탐색
+#     - 여러 날짜에 나눠서 실행 가능
+poetry run lex-dpr sweep --config configs/sweep.yaml --no-smoke-test
+
+# 5-2. Sweep 파이프라인 테스트 (smoke-sweep)
+#     - 최소한의 기능, 최소한의 반복 파라미터로 sweep 테스트
+#     - Sweep 파이프라인 동작 확인용
+poetry run lex-dpr sweep --smoke-test
+# 또는 설정 파일 직접 지정:
+poetry run lex-dpr sweep --config configs/smoke_sweep.yaml --smoke-test
+
+# 5-3. 스윕 설정 파일 생성 (템플릿)
 poetry run lex-dpr sweep init --output configs/my_sweep.yaml
 # SMOKE TEST 모드용 템플릿 생성:
 poetry run lex-dpr sweep init --output configs/smoke_sweep.yaml --smoke-test
 
-# 5-2. 설정 파일 편집 (탐색할 파라미터 범위 설정)
+# 5-4. 설정 파일 편집 (탐색할 파라미터 범위 설정)
 # vim configs/my_sweep.yaml
 #
 # 예시 설정 (configs/my_sweep.yaml):
@@ -257,7 +307,7 @@ poetry run lex-dpr sweep start --config configs/my_sweep.yaml --no-run-agent
 # SMOKE TEST 모드로 실행 (test_run=true, epochs=1 자동 적용):
 poetry run lex-dpr sweep start --config configs/my_sweep.yaml --smoke-test
 
-# 5-4. 에이전트 실행 (여러 날짜/머신에서 나눠서 실행 가능)
+# 5-6. 에이전트 실행 (여러 날짜/머신에서 나눠서 실행 가능)
 # 설정 파일에서 스윕 ID 자동 읽기:
 poetry run lex-dpr sweep agent --config configs/my_sweep.yaml
 
