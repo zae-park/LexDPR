@@ -22,7 +22,7 @@ import typer
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # 서브커맨드 모듈 import
-from lex_dpr.cli import train, embed, api, config, eval_cli
+from lex_dpr.cli import train, embed, api, config, eval_cli, sweep
 from lex_dpr.crawler.crawl_precedents import PrecedentCrawler, REQUEST_DELAY
 from lex_dpr.data_processing import make_pairs as make_pairs_mod
 
@@ -384,6 +384,10 @@ def gen_data_command(
         logger.info(f"평가용 pairs_eval.jsonl 생성: {eval_path} (from {valid_path})")
     else:
         logger.warning(f"valid 파일을 찾을 수 없어 pairs_eval.jsonl을 생성하지 못했습니다: {valid_path}")
+
+
+# Sweep 서브커맨드
+app.add_typer(sweep.app, name="sweep", help="WandB Sweep을 통한 하이퍼파라미터 튜닝")
 
 
 @app.command("analyze-pairs")

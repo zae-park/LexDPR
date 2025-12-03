@@ -156,6 +156,22 @@ poetry run lex-dpr eval \
   --eval-pairs data/pairs_eval.jsonl \
   --k-values 1 3 5 10 \
   --output eval_results.json
+
+# 5. 하이퍼파라미터 튜닝 (WandB Sweep)
+# 5-1. 스윕 설정 파일 생성
+poetry run lex-dpr sweep init --output configs/my_sweep.yaml
+
+# 5-2. 설정 파일 편집 (탐색할 파라미터 범위 설정)
+# vim configs/my_sweep.yaml
+
+# 5-3. 스윕 시작 (WandB에 스윕 생성)
+poetry run lex-dpr sweep start --config configs/my_sweep.yaml
+# 출력된 스윕 ID를 복사하세요
+
+# 5-4. 에이전트 실행 (여러 머신에서 병렬 실행 가능)
+poetry run lex-dpr sweep agent <sweep-id>
+# WandB 대시보드에서 진행 상황 확인:
+# https://wandb.ai/<entity>/<project>/sweeps/<sweep-id>
 ```
 
 

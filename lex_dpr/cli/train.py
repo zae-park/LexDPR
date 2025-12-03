@@ -23,6 +23,15 @@ from lex_dpr.trainer.base_trainer import BiEncoderTrainer
 logger = logging.getLogger("lex_dpr.train")
 
 
+def _is_wandb_sweep_mode() -> bool:
+    """WandB Sweep 모드인지 확인"""
+    try:
+        import wandb
+        return wandb.run is not None and hasattr(wandb.run, 'sweep_id') and wandb.run.sweep_id is not None
+    except (ImportError, AttributeError):
+        return False
+
+
 def _get_config_path(filename: str) -> Path:
     """설정 파일 경로 반환 (사용자 configs 우선, 없으면 패키지 기본값)"""
     user_configs_dir = Path.cwd() / "configs"
@@ -126,12 +135,26 @@ def main():
         logger.info("")
     cfg = OmegaConf.merge(cfg, overrides)
 
+    # WandB Sweep 모드 확인
+    is_sweep_mode = _is_wandb_sweep_mode()
+    
+    if is_sweep_mode:
+        # SweepTrainer 사용 (wandb.config를 읽어서 cfg에 병합)
+        from lex_dpr.trainer.sweep_trainer import SweepTrainer
+        logger.info("🔍 WandB Sweep 모드로 실행합니다.")
+        logger.info("")
+        trainer_wrapper = SweepTrainer(cfg)
+        trainer = trainer_wrapper.trainer
+        cfg = trainer_wrapper.cfg  # SweepTrainer가 병합한 최종 설정 사용
+    else:
+        # 일반 BiEncoderTrainer 사용
+        trainer = BiEncoderTrainer(cfg)
+
     # 설정 요약 로깅 (전체 출력 대신)
     _log_config_summary(cfg)
     
-    # Trainer 초기화 및 학습 시작
-    logger.info("Trainer 초기화 중...")
-    trainer = BiEncoderTrainer(cfg)
+    # Trainer 초기화 완료
+    logger.info("Trainer 초기화 완료")
     logger.info("")
     
     logger.info("학습 시작")
