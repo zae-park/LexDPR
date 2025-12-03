@@ -140,11 +140,43 @@ poetry run lex-dpr train
 poetry run lex-dpr train trainer.epochs=5 trainer.lr=3e-5
 
 # 3-1. 빠른 SMOKE TEST 학습 실행
+#     - base.yaml을 기반으로 모든 기능을 활성화한 smoke-test용 config 자동 생성
 #     - 최대 100 iteration 또는 1 epoch만 수행
 #     - 파이프라인이 정상 동작하는지 빠르게 확인할 때 사용
+#     - 모든 기능 자동 활성화:
+#       * Learning Rate Scheduler: Warm-up + Cosine Annealing
+#       * Gradient Clipping: 활성화 (max_norm=1.0)
+#       * Early Stopping: 활성화 (patience=2)
+#     - epoch와 step 수만 제한하여 빠른 동작 테스트 수행
 poetry run lex-dpr smoke-train
-# 추가 하이퍼파라미터는 덮어쓸 수 있습니다 (test_run/epochs는 고정):
+# 추가 하이퍼파라미터는 덮어쓸 수 있습니다 (test_run/epochs/기능 활성화는 고정):
 poetry run lex-dpr smoke-train trainer.lr=3e-5
+
+# 3-2. Early Stopping 활성화
+#     - Validation 메트릭을 모니터링하여 학습을 조기 종료
+#     - 최고 성능 모델을 자동으로 저장
+#     configs/base.yaml에서 설정:
+#       trainer:
+#         early_stopping:
+#           enabled: true
+#           metric: "cosine_ndcg@10"  # 모니터링할 메트릭
+#           patience: 3  # 개선이 없을 때 기다릴 평가 횟수
+#           mode: "max"  # "max" 또는 "min"
+#     또는 명령줄에서:
+poetry run lex-dpr train trainer.early_stopping.enabled=true trainer.early_stopping.patience=5
+
+# 학습 스케줄러: Warm-up + Cosine Annealing
+# - 전체 학습 step의 10%에서 warmup 수행
+# - 이후 cosine annealing으로 학습률 감소
+# - 자동으로 설정되므로 별도 설정 불필요
+
+# 3-3. Gradient Clipping 활성화
+#     - Gradient explosion 방지를 위한 gradient clipping
+#     configs/base.yaml에서 설정:
+#       trainer:
+#         gradient_clip_norm: 1.0  # 최대 노름 값 (0.0이면 비활성화)
+#     또는 명령줄에서:
+poetry run lex-dpr train trainer.gradient_clip_norm=1.0
 
 # 4. 학습된 모델 평가
 #    MRR@k, NDCG@k, MAP@k, Precision/Recall@k 등 Retrieval 메트릭을 계산합니다.

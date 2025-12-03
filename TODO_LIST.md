@@ -176,9 +176,15 @@
 ### 4.6 특수 기능
 - ✅ 테스트 실행 모드 (test_run)
 - ✅ 에포크/스텝 제한
-- 📋 학습 조기 종료 (Early Stopping)
+- ✅ 학습 조기 종료 (Early Stopping)
+  - ✅ Validation 메트릭 기반 자동 중단
+  - ✅ Best checkpoint 자동 저장
+  - ✅ Patience 및 min_delta 설정 지원
 - 📋 학습률 스케줄러 다양화
-- 📋 그라디언트 클리핑
+- ✅ 그라디언트 클리핑
+  - ✅ 모델 backward hook을 통한 gradient clipping
+  - ✅ 설정 파일 통합
+  - ✅ 통계 로깅
 
 ### 4.7 하이퍼파라미터 튜닝
 - ✅ 하이퍼파라미터 스윕 (Hyperparameter Sweep) 시스템
@@ -210,8 +216,8 @@
 ### 5.1 평가 스크립트
 - ✅ 평가 함수 구현 (`eval.py`)
 - ✅ InformationRetrievalEvaluator 설정
-- 📋 독립 평가 스크립트 (`scripts/evaluate.py` 개선)
-- 📋 배치 평가 지원
+- ✅ 독립 평가 스크립트 (`scripts/evaluate.py`)
+- ✅ 상세 평가 모듈 구현 (`eval_detailed.py`)
 
 ### 5.2 평가 메트릭
 - ✅ MRR@k
@@ -221,9 +227,18 @@
 - ✅ Precision@k
 - ✅ Recall@k
 - 📋 커스텀 법률 도메인 메트릭
-- 📋 메트릭 상세 분석 리포트
 
-### 5.3 평가 데이터셋
+### 5.3 평가 리포트
+- ✅ 상세 분석 리포트 생성 (`eval_detailed.py`)
+  - ✅ 쿼리별 성능 분석
+  - ✅ 소스별 성능 분석
+  - ✅ 실패 케이스 분석
+  - ✅ 쿼리 길이별 성능 분석
+- ✅ 리포트 포맷 개선 (텍스트, JSON)
+- ✅ 여러 모델 비교 분석 기능 (`compare_models` 함수)
+- 📋 선택적 시각화 (그래프, 차트)
+
+### 5.4 평가 데이터셋
 - 📋 표준 평가 데이터셋 구축
 - 📋 법률 도메인 특화 평가셋
 - 📋 다양한 난이도 평가셋
@@ -246,12 +261,12 @@
 - ✅ 임베딩 생성 및 저장 (NPY/NPZ 포맷)
 - 📋 평가용 FAISS 인덱스 개선 (필요 시)
 - 📋 벡터 검색 성능 벤치마크 (평가용)
-- ⏸️ PostgreSQL + pgvector 통합 - 백엔드 인프라 담당 (별도 프로젝트)
+- ⏸️ PostgreSQL + pgvector 통합 - 
 
 ### 6.3 검색 기능
 - ✅ 평가용 검색 구현 (InformationRetrievalEvaluator 사용)
-- ⏸️ 프로덕션 검색 API - 백엔드 인프라 담당 (별도 프로젝트)
-- ⏸️ PostgreSQL + pgvector 기반 검색 - 백엔드 인프라 담당 (별도 프로젝트)
+- ⏸️ 프로덕션 검색 API - 
+- ⏸️ PostgreSQL + pgvector 기반 검색 - 
 
 ---
 
@@ -264,7 +279,7 @@
 - ✅ Query 임베딩 엔드포인트 (`POST /embed/query`)
 - ✅ 배치 임베딩 지원 (여러 텍스트 동시 처리)
 - ✅ API 문서 자동 생성 (Swagger/OpenAPI) - FastAPI 기본 제공
-- ⏸️ 검색 엔드포인트 (Top-k) - 백엔드 인프라 담당 (별도 프로젝트)
+- ⏸️ 검색 엔드포인트 (Top-k) - 
 
 ### 7.2 API 기능
 - 📋 인증 및 권한 관리
@@ -492,7 +507,7 @@
 1. 평가 시스템 강화
    - 독립 평가 스크립트 개선
    - 상세 분석 리포트 생성
-2. 학습 조기 종료 (Early Stopping)
+2. ✅ 학습 조기 종료 (Early Stopping) - 완료
    - Validation 메트릭 기반 자동 중단
    - Best checkpoint 자동 저장
 3. 단일 텍스트 임베딩 테스트 CLI (`embed-text`)
@@ -504,8 +519,8 @@
 5. 모델 배포 준비
    - Docker 이미지 빌드 (모델 서빙용)
    - 모델 체크포인트 관리
-   - ⏸️ 프로덕션 API 서버 - 백엔드 인프라 담당 (별도 프로젝트)
-   - ⏸️ CI/CD 파이프라인 - DevOps 담당 (별도 프로젝트)
+   - ⏸️ 프로덕션 API 서버 - 
+   - ⏸️ CI/CD 파이프라인 - 
 
 ---
 

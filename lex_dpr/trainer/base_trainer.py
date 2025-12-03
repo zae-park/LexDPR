@@ -19,6 +19,12 @@ from ..models.templates import TemplateMode, tq, tp
 from ..utils.io import read_jsonl
 from ..utils.seed import set_seed
 from ..utils.web_logging import create_web_logger, WebLogger
+from .early_stopping import (
+    EarlyStoppingCallback,
+    EarlyStoppingEvaluatorWrapper,
+    EarlyStoppingException,
+)
+from .gradient_clipping import apply_gradient_clipping_to_model
 
 logger = logging.getLogger("lex_dpr.trainer")
 
@@ -44,7 +50,12 @@ class TrainerArtifacts:
 
 
 class WebLoggingEvaluatorWrapper:
-    """sentence-transformers evaluator를 래핑하여 웹 로깅에 결과 전송"""
+    """
+    sentence-transformers evaluator를 래핑하여 웹 로깅에 결과 전송
+    
+    sentence-transformers의 SequentialEvaluator와 호환되도록
+    iterable 인터페이스를 제공합니다.
+    """
     
     def __init__(self, evaluator, web_logger: WebLogger):
         self.evaluator = evaluator
@@ -82,6 +93,13 @@ class WebLoggingEvaluatorWrapper:
                 logger.info(f"평가 메트릭을 웹 로깅 서비스에 전송했습니다: {len(metrics)}개 메트릭 (step={step})")
         
         return result
+    
+    def __iter__(self):
+        """
+        SequentialEvaluator와의 호환성을 위해 iterable 인터페이스 제공
+        자신을 단일 항목으로 반환
+        """
+        return iter([self])
 
 
 class WebLoggingCallback:
@@ -289,8 +307,19 @@ class BiEncoderTrainer:
             drop_last=False,
         )
         loss = losses.MultipleNegativesRankingLoss(self.model, scale=self.cfg.trainer.temperature)
+        
+        # Gradient clipping 적용
+        gradient_clip_norm = float(getattr(self.cfg.trainer, "gradient_clip_norm", 0.0))
+        self.gradient_clipping_hook = None
+        if gradient_clip_norm > 0:
+            self.gradient_clipping_hook = apply_gradient_clipping_to_model(
+                self.model,
+                max_norm=gradient_clip_norm,
+            )
 
         evaluator = None
+        early_stopping = None
+        
         if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
             base_evaluator, _ = build_ir_evaluator(
                 passages=self.passages,
@@ -299,11 +328,39 @@ class BiEncoderTrainer:
                 k_vals=self.cfg.trainer.k_values,
                 template=self.template_mode,
             )
-            # 웹 로깅이 활성화된 경우 래퍼로 감싸기
+            
+            # Early Stopping 설정 확인
+            early_stopping_config = getattr(self.cfg.trainer, "early_stopping", None)
+            if early_stopping_config and getattr(early_stopping_config, "enabled", False):
+                metric_key = getattr(early_stopping_config, "metric", "cosine_ndcg@10")
+                patience = int(getattr(early_stopping_config, "patience", 3))
+                min_delta = float(getattr(early_stopping_config, "min_delta", 0.0))
+                mode = getattr(early_stopping_config, "mode", "max")
+                restore_best = getattr(early_stopping_config, "restore_best_weights", True)
+                
+                early_stopping = EarlyStoppingCallback(
+                    model=self.model,
+                    out_dir=self.cfg.out_dir,
+                    metric_key=metric_key,
+                    patience=patience,
+                    min_delta=min_delta,
+                    mode=mode,
+                    restore_best_weights=restore_best,
+                )
+                logger.info("Early Stopping 활성화됨")
+            
+            # 래퍼 체인: Early Stopping -> Web Logging -> Base Evaluator
+            current_evaluator = base_evaluator
+            
+            # Early Stopping 래퍼 추가
+            if early_stopping:
+                current_evaluator = EarlyStoppingEvaluatorWrapper(current_evaluator, early_stopping)
+            
+            # 웹 로깅 래퍼 추가
             if self.web_logger and self.web_logger.is_active:
-                evaluator = WebLoggingEvaluatorWrapper(base_evaluator, self.web_logger)
+                evaluator = WebLoggingEvaluatorWrapper(current_evaluator, self.web_logger)
             else:
-                evaluator = base_evaluator
+                evaluator = current_evaluator
         elif self.cfg.trainer.eval_pairs:
             logger.warning(f"eval_pairs 파일을 찾을 수 없습니다: {self.cfg.trainer.eval_pairs}. 평가를 건너뜁니다.")
 
@@ -324,6 +381,16 @@ class BiEncoderTrainer:
             steps_per_epoch=steps_per_epoch,
             warmup_steps=warmup_steps,
         )
+    
+    def _get_early_stopping(self) -> Optional[EarlyStoppingCallback]:
+        """Early Stopping 콜백 반환 (내부용)"""
+        if self.artifacts.evaluator:
+            if isinstance(self.artifacts.evaluator, EarlyStoppingEvaluatorWrapper):
+                return self.artifacts.evaluator.early_stopping
+            elif isinstance(self.artifacts.evaluator, WebLoggingEvaluatorWrapper):
+                if hasattr(self.artifacts.evaluator.evaluator, "early_stopping"):
+                    return self.artifacts.evaluator.evaluator.early_stopping
+        return None
 
     # ------------------------------
     # Web Logging Helpers
@@ -386,6 +453,19 @@ class BiEncoderTrainer:
         
         if test_run:
             logger.info(f"🧪 테스트 실행 모드: 학습 시작 (에포크: {effective_epochs}, 최대 {self.artifacts.steps_per_epoch} iteration, 학습률: {self.cfg.trainer.lr})")
+            logger.info(f"  - Warmup 스텝: {self.artifacts.warmup_steps} (전체 step의 {self.artifacts.warmup_steps/max(1, self.artifacts.steps_per_epoch)*100:.1f}%)")
+            logger.info(f"  - Scheduler: Warm-up + Cosine Annealing")
+            # Gradient clipping 상태
+            if hasattr(self, 'gradient_clipping_hook') and self.gradient_clipping_hook:
+                logger.info(f"  - Gradient Clipping: 활성화 (max_norm={getattr(self.cfg.trainer, 'gradient_clip_norm', 0.0)})")
+            else:
+                logger.info(f"  - Gradient Clipping: 비활성화")
+            # Early stopping 상태
+            early_stopping = self._get_early_stopping()
+            if early_stopping:
+                logger.info(f"  - Early Stopping: 활성화 (metric={early_stopping.metric_key}, patience={early_stopping.patience})")
+            else:
+                logger.info(f"  - Early Stopping: 비활성화")
         else:
             logger.info(f"학습 시작 (에포크: {effective_epochs}, 학습률: {self.cfg.trainer.lr})")
         logger.info("")
@@ -396,25 +476,52 @@ class BiEncoderTrainer:
             callback = WebLoggingCallback(self.web_logger)
             logger.info("학습 중 loss를 WandB에 로깅합니다.")
         
-        self.model.fit(
-            train_objectives=[(self.artifacts.loader, self.artifacts.loss)],
-            epochs=effective_epochs,
-            warmup_steps=self.artifacts.warmup_steps,
-            scheduler="warmupcosine",
-            optimizer_params={"lr": self.cfg.trainer.lr},
-            use_amp=bool(self.cfg.trainer.use_amp),
-            show_progress_bar=True,
-            evaluator=self.artifacts.evaluator,
-            evaluation_steps=self.cfg.trainer.eval_steps if self.artifacts.evaluator else None,
-            callback=callback,  # 학습 중 loss 로깅 콜백
-        )
+        # Early Stopping 정보 출력
+        early_stopping = self._get_early_stopping()
+        if early_stopping:
+            logger.info(f"Early Stopping 활성화: {early_stopping.metric_key} 모니터링 (patience={early_stopping.patience})")
+        
+        try:
+            self.model.fit(
+                train_objectives=[(self.artifacts.loader, self.artifacts.loss)],
+                epochs=effective_epochs,
+                warmup_steps=self.artifacts.warmup_steps,
+                scheduler="warmupcosine",
+                optimizer_params={"lr": self.cfg.trainer.lr},
+                use_amp=bool(self.cfg.trainer.use_amp),
+                show_progress_bar=True,
+                evaluator=self.artifacts.evaluator,
+                evaluation_steps=self.cfg.trainer.eval_steps if self.artifacts.evaluator else None,
+                callback=callback,  # 학습 중 loss 로깅 콜백
+            )
+        except EarlyStoppingException as e:
+            logger.info(f"Early Stopping으로 인해 학습이 조기 종료되었습니다: {e}")
+            # Early stopping이 발생했지만 정상적인 종료로 처리
 
         logger.info("")
-        logger.info("모델 저장 중...")
-        os.makedirs(self.cfg.out_dir, exist_ok=True)
-        save_path = os.path.join(self.cfg.out_dir, "bi_encoder")
-        self.model.save(save_path)
-        logger.info(f"✅ 모델 저장 완료: {save_path}")
+        
+        # Early Stopping이 발생한 경우 최고 성능 모델이 이미 저장되어 있음
+        early_stopping = self._get_early_stopping()
+        if early_stopping and early_stopping.should_stop:
+            logger.info("Early Stopping으로 인해 최고 성능 모델이 이미 저장되었습니다.")
+            best_path = os.path.join(self.cfg.out_dir, "bi_encoder_best")
+            if os.path.exists(best_path):
+                logger.info(f"최고 성능 모델 경로: {best_path}")
+                logger.info(f"최고 성능: {early_stopping.metric_key}={early_stopping.get_best_score():.4f} (step {early_stopping.get_best_step()})")
+        else:
+            # 일반 모델 저장
+            logger.info("모델 저장 중...")
+            os.makedirs(self.cfg.out_dir, exist_ok=True)
+            save_path = os.path.join(self.cfg.out_dir, "bi_encoder")
+            self.model.save(save_path)
+            logger.info(f"✅ 모델 저장 완료: {save_path}")
+            
+            # Early Stopping이 활성화된 경우 최고 성능 모델도 최종 모델로 복사
+            if early_stopping and early_stopping.get_best_step() >= 0:
+                best_path = os.path.join(self.cfg.out_dir, "bi_encoder_best")
+                if os.path.exists(best_path):
+                    logger.info(f"최고 성능 모델도 저장되어 있습니다: {best_path}")
+                    logger.info(f"최고 성능: {early_stopping.metric_key}={early_stopping.get_best_score():.4f} (step {early_stopping.get_best_step()})")
         
         # 웹 로깅에 모델 아티팩트 저장
         if self.web_logger and self.web_logger.is_active:
@@ -441,6 +548,18 @@ class BiEncoderTrainer:
                 self._log_evaluation_metrics({
                     f"eval/recall@{self.cfg.trainer.k}": recall,
                 })
+        
+        # Gradient clipping hook 제거
+        if hasattr(self, 'gradient_clipping_hook') and self.gradient_clipping_hook:
+            stats = self.gradient_clipping_hook.get_stats()
+            logger.info(
+                f"Gradient clipping 통계: "
+                f"총 {stats['total_backwards']}회 backward, "
+                f"{stats['clipped_backwards']}회 clipping "
+                f"(비율: {stats['clipping_ratio']:.2%}, "
+                f"마지막 norm: {stats['last_norm']:.4f})"
+            )
+            self.gradient_clipping_hook.remove_hook()
         
         # 웹 로깅 종료
         if self.web_logger and self.web_logger.is_active:

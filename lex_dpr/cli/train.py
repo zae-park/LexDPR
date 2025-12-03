@@ -67,6 +67,23 @@ def _log_config_summary(cfg):
     logger.info(f"  Gradient Accumulation Steps: {cfg.trainer.gradient_accumulation_steps}")
     logger.info(f"  AMP 사용: {cfg.trainer.use_amp}")
     logger.info(f"  평가 스텝: {cfg.trainer.eval_steps if cfg.trainer.eval_steps > 0 else '비활성화'}")
+    
+    # Gradient Clipping 상태
+    gradient_clip_norm = float(getattr(cfg.trainer, "gradient_clip_norm", 0.0))
+    if gradient_clip_norm > 0:
+        logger.info(f"  Gradient Clipping: 활성화 (max_norm={gradient_clip_norm})")
+    else:
+        logger.info(f"  Gradient Clipping: 비활성화")
+    
+    # Early Stopping 상태
+    early_stopping_config = getattr(cfg.trainer, "early_stopping", None)
+    if early_stopping_config and getattr(early_stopping_config, "enabled", False):
+        metric = getattr(early_stopping_config, "metric", "cosine_ndcg@10")
+        patience = getattr(early_stopping_config, "patience", 3)
+        logger.info(f"  Early Stopping: 활성화 (metric={metric}, patience={patience})")
+    else:
+        logger.info(f"  Early Stopping: 비활성화")
+    
     if test_run:
         logger.info(f"  🧪 테스트 실행 모드: 활성화 (최대 100 iteration 또는 1 epoch)")
     logger.info("")

@@ -63,8 +63,11 @@ def smoke_train_command():
     """
     빠른 학습 SMOKE TEST 실행용 명령어.
 
+    - base.yaml을 기반으로 모든 기능을 활성화한 smoke-test용 config 자동 생성
     - test_run=true 로 고정 (최대 100 iteration 또는 1 epoch)
     - trainer.epochs=1 로 고정
+    - 모든 기능(learning rate scheduler, gradient clipping, early stopping 등) 활성화
+    - epoch와 step 수만 제한하여 빠른 동작 테스트 수행
 
     예시:
       poetry run lex-dpr smoke-train
@@ -74,14 +77,56 @@ def smoke_train_command():
     try:
         # 사용자가 추가로 넘긴 오버라이드 인자 확보
         user_args = sys.argv[2:] if len(sys.argv) > 2 else []
+        
         # SMOKE TEST 모드에서 강제할 인자
-        forced_args = ["test_run=true", "trainer.epochs=1"]
+        # 1. 반복 횟수 제한 (epoch/step)
+        # 2. 모든 기능 활성화 (gradient clipping, early stopping 등)
+        forced_args = [
+            "test_run=true",
+            "trainer.epochs=1",
+            # 모든 기능 활성화
+            "trainer.gradient_clip_norm=1.0",
+            "trainer.early_stopping.enabled=true",
+            "trainer.early_stopping.patience=2",  # smoke-test에서는 patience를 낮게 설정
+            "trainer.eval_steps=50",  # smoke-test에서는 더 자주 평가
+        ]
+        
         # 사용자가 같은 키를 덮어쓰지 못하도록 필터링
         filtered_user_args = [
             a
             for a in user_args
-            if not (a.startswith("test_run=") or a.startswith("trainer.epochs="))
+            if not (
+                a.startswith("test_run=") or 
+                a.startswith("trainer.epochs=") or
+                a.startswith("trainer.gradient_clip_norm=") or
+                a.startswith("trainer.early_stopping.enabled=") or
+                a.startswith("trainer.early_stopping.patience=") or
+                a.startswith("trainer.eval_steps=")
+            )
         ]
+        
+        # 로그 출력을 위해 smoke-test용 config 정보 출력
+        logger.info("=" * 80)
+        logger.info("🧪 SMOKE TEST 모드: 모든 기능 활성화된 config 생성")
+        logger.info("=" * 80)
+        logger.info("📋 Smoke-test용 설정 (자동 생성):")
+        logger.info("  ✅ 반복 횟수 제한:")
+        logger.info("     - test_run: true (최대 100 iteration 또는 1 epoch)")
+        logger.info("     - epochs: 1")
+        logger.info("     - eval_steps: 50 (더 자주 평가)")
+        logger.info("  ✅ 활성화된 기능:")
+        logger.info("     - Learning Rate Scheduler: Warm-up + Cosine Annealing (전체 step의 10% warmup)")
+        logger.info("     - Gradient Clipping: 활성화 (max_norm=1.0)")
+        logger.info("     - Early Stopping: 활성화 (metric=cosine_ndcg@10, patience=2)")
+        logger.info("")
+        logger.info("💡 사용자 오버라이드:")
+        if filtered_user_args:
+            logger.info(f"     {', '.join(filtered_user_args)}")
+        else:
+            logger.info("     없음")
+        logger.info("=" * 80)
+        logger.info("")
+        
         sys.argv = ["train"] + forced_args + filtered_user_args
         train.main()
     finally:

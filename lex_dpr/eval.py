@@ -86,8 +86,12 @@ def eval_recall_at_k(
         q_emb = encoder.encode_queries([row["query_text"]], batch_size=1)
         q_tensor = torch.from_numpy(q_emb).float()
         scores = q_tensor @ corpus_tensor.T
-        topk = torch.topk(scores, k=min(k, scores.numel())).indices.tolist()
-        top_ids = {corpus_ids[i] for i in topk}
+        # torch.topk는 (values, indices) 튜플을 반환
+        # scores는 2D 텐서이므로 squeeze하여 1D로 만든 후 topk 적용
+        scores_1d = scores.squeeze(0)
+        topk_result = torch.topk(scores_1d, k=min(k, len(corpus_ids)))
+        topk_indices = topk_result.indices.tolist()
+        top_ids = {corpus_ids[i] for i in topk_indices}
         if top_ids & set(row["positive_passages"]):
             hits += 1
 
