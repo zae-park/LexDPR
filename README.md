@@ -118,21 +118,70 @@ poetry install --extras "web-logging"
 # 2. 설정 파일 초기화
 poetry run lex-dpr config init
 
-# 2-1. (선택) 판례 크롤링 - law.go.kr에서 판례 JSON 수집
-#    PAGE 번호를 기준으로 시작 페이지와 최대 페이지 수를 지정할 수 있습니다.
-#    (첫 실행 시 데이터 준비용으로 권장)
-poetry run lex-dpr crawl-precedents --max-pages 50
-# 또는
-poetry run lex-dpr crawl-precedents --start-page 51 --max-pages 50
+# ============================================
+# 📌 프로젝트 초기 설정 가이드 (처음 clone한 경우)
+# ============================================
+# 
+# 프로젝트를 처음 clone한 경우, 다음 순서로 데이터를 생성해야 합니다:
+#
+# 1. 원본 데이터 확인
+#    - data/laws/          : 법령 JSON 파일들
+#    - data/admin_rules/   : 행정규칙 JSON 파일들
+#    - data/precedents/    : 판례 JSON 파일들 (이미 있을 수 있음)
+#
+# 2. Passage 생성 (전처리)
+#    법령, 행정규칙, 판례 JSON을 passage JSONL로 변환합니다.
+#    (preprocess_auto.py는 자동으로 파일 타입을 감지하여 처리합니다)
+#
+poetry run python -m lex_dpr.data_processing.preprocess_auto \
+  --src-dir data/laws \
+  --out-law data/processed/law_passages.jsonl \
+  --glob "**/*.json"
 
-# 2-2. 질의-passage 쌍 생성 (train/valid/test split 포함)
-#     - law/admin/precedent passage를 이용해 pairs_train/valid/test를 생성합니다.
+poetry run python -m lex_dpr.data_processing.preprocess_auto \
+  --src-dir data/admin_rules \
+  --out-admin data/processed/admin_passages.jsonl \
+  --glob "**/*.json"
+
+poetry run python -m lex_dpr.data_processing.preprocess_auto \
+  --src-dir data/precedents \
+  --out-prec data/processed/prec_passages.jsonl \
+  --glob "**/*.json"
+
+# 3. Passage 코퍼스 병합 (선택사항, 평가용)
+#    법령과 행정규칙 passage를 하나로 병합합니다.
+poetry run python -m lex_dpr.data_processing.merge_corpus \
+  --law data/processed/law_passages.jsonl \
+  --admin data/processed/admin_passages.jsonl \
+  --out data/processed/merged_corpus.jsonl
+
+# 4. 질의-passage 쌍 생성 (train/valid/test split 포함)
+#    - law/admin/precedent passage를 이용해 pairs_train/valid/test를 생성합니다.
+#    - 판례 원본 JSON 디렉토리를 직접 지정할 수도 있습니다 (--prec-json-dir)
 poetry run lex-dpr gen-data
+# 또는 판례 원본 JSON 디렉토리를 직접 지정:
+poetry run lex-dpr gen-data \
+  --law data/processed/law_passages.jsonl \
+  --admin data/processed/admin_passages.jsonl \
+  --prec-json-dir data/precedents \
+  --out data/pairs_train.jsonl
+
 # 결과 파일:
 #   - data/pairs_train.jsonl
 #   - data/pairs_train_valid.jsonl
 #   - data/pairs_train_test.jsonl
 #   - data/pairs_eval.jsonl (valid 세트 복사본, 학습/평가에 사용)
+
+# ============================================
+# 📌 추가 데이터 준비 (선택사항)
+# ============================================
+
+# 2-1. (선택) 판례 크롤링 - law.go.kr에서 판례 JSON 수집
+#    PAGE 번호를 기준으로 시작 페이지와 최대 페이지 수를 지정할 수 있습니다.
+#    (판례 데이터가 없거나 추가로 수집하려는 경우)
+poetry run lex-dpr crawl-precedents --max-pages 50
+# 또는
+poetry run lex-dpr crawl-precedents --start-page 51 --max-pages 50
 
 # 3. 학습 명령어 정리
 # ============================================
