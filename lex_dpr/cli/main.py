@@ -390,6 +390,75 @@ def gen_data_command(
 app.add_typer(sweep.app, name="sweep", help="WandB Sweep을 통한 하이퍼파라미터 튜닝")
 
 
+@app.command("analyze-passages")
+def analyze_passages_command(
+    corpus: str = typer.Option(
+        "data/processed/merged_corpus.jsonl",
+        "--corpus",
+        "-c",
+        help="분석할 passage corpus JSONL 파일 경로 (기본값: data/processed/merged_corpus.jsonl)",
+    ),
+    tokenizer: Optional[str] = typer.Option(
+        None,
+        "--tokenizer",
+        "-t",
+        help="토큰 길이 계산용 토크나이저 (예: BAAI/bge-m3). 지정하지 않으면 단어 수로 추정",
+    ),
+    min_text_length: int = typer.Option(
+        10,
+        "--min-text-length",
+        help="짧은 텍스트로 간주할 최소 길이 (기본값: 10)",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="텍스트 리포트 저장 경로 (선택사항)",
+    ),
+    json_output: Optional[str] = typer.Option(
+        None,
+        "--json-output",
+        help="JSON 리포트 저장 경로 (선택사항)",
+    ),
+):
+    """
+    Passage Corpus 품질 분석 스크립트
+    
+    Passage corpus의 통계 및 품질을 분석합니다:
+    - 총 passage 개수 및 소스별 분포
+    - 중복 passage 탐지 및 통계
+    - 길이 분포 분석 (문자 수, 토큰 수)
+    - 소스별(법령/행정규칙/판례) 통계
+    
+    예시:
+      poetry run lex-dpr analyze-passages
+      poetry run lex-dpr analyze-passages --corpus data/merged_corpus.jsonl
+      poetry run lex-dpr analyze-passages --corpus data/merged_corpus.jsonl --tokenizer BAAI/bge-m3 --output report.txt
+    """
+    from scripts.analyze_passages import analyze_passages, print_analysis_report
+    import json as json_module
+    
+    # 분석 실행
+    logger.info(f"Passage corpus 분석 중: {corpus}")
+    results = analyze_passages(
+        corpus_path=corpus,
+        tokenizer_name=tokenizer,
+        min_text_length=min_text_length,
+    )
+    
+    # 리포트 출력
+    print_analysis_report(results, output_file=output)
+    
+    # JSON 출력
+    if json_output:
+        json_path = Path(json_output)
+        json_path.write_text(
+            json_module.dumps(results, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+        logger.info(f"✅ JSON 리포트 저장: {json_path}")
+
+
 @app.command("analyze-pairs")
 def analyze_pairs_command(
     pairs_dir: Optional[str] = typer.Option(
