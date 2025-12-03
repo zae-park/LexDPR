@@ -148,14 +148,31 @@ poetry run lex-dpr smoke-train trainer.lr=3e-5
 
 # 4. 학습된 모델 평가
 #    MRR@k, NDCG@k, MAP@k, Precision/Recall@k 등 Retrieval 메트릭을 계산합니다.
+
+# 기본 평가 (JSON 출력)
 poetry run lex-dpr eval
-# 옵션 예시:
 poetry run lex-dpr eval \
   --model checkpoint/lexdpr/bi_encoder \
   --passages data/processed/merged_corpus.jsonl \
   --eval-pairs data/pairs_eval.jsonl \
   --k-values 1 3 5 10 \
   --output eval_results.json
+
+# 상세 분석 리포트 (쿼리별, 소스별, 실패 케이스 분석 포함)
+poetry run lex-dpr eval \
+  --model checkpoint/lexdpr/bi_encoder \
+  --detailed \
+  --report eval_detailed_report.txt \
+  --output eval_detailed_results.json
+
+# 여러 모델 비교 평가 (Sweep으로 학습된 모델들 비교)
+poetry run lex-dpr eval \
+  --compare-models \
+    checkpoint/model1 \
+    checkpoint/model2 \
+    checkpoint/model3 \
+  --compare-output model_comparison_report.txt \
+  --output model_comparison.json
 
 # 5. 하이퍼파라미터 튜닝 (WandB Sweep)
 # 5-1. 스윕 설정 파일 생성

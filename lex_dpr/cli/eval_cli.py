@@ -3,17 +3,30 @@ LexDPR 평가 CLI 모듈
 
 학습된 Bi-Encoder(SentenceTransformer) 체크포인트를 이용해
 MRR@k, NDCG@k, MAP@k, Precision/Recall@k 등을 계산한다.
+
+상세 분석 기능:
+- 쿼리별 성능 분석
+- 소스별 성능 분석
+- 실패 케이스 분석
+- 쿼리/Passage 길이별 성능 분석
+- 여러 모델 비교 분석
 """
 
 import argparse
 import json
+import statistics
 from pathlib import Path
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 from sentence_transformers import SentenceTransformer
 
 from lex_dpr.data import load_passages
 from lex_dpr.eval import build_ir_evaluator
+from lex_dpr.eval_detailed import (
+    compare_models,
+    evaluate_detailed,
+    print_detailed_report,
+)
 from lex_dpr.models.templates import TemplateMode
 from lex_dpr.utils.io import read_jsonl
 
@@ -70,6 +83,28 @@ def main() -> None:
         default="",
         help="결과를 저장할 JSON 파일 경로 (비우면 stdout에만 출력)",
     )
+    parser.add_argument(
+        "--detailed",
+        action="store_true",
+        help="상세 분석 리포트 생성 (쿼리별, 소스별, 실패 케이스 분석 포함)",
+    )
+    parser.add_argument(
+        "--report",
+        type=str,
+        default="",
+        help="상세 리포트를 저장할 텍스트 파일 경로 (--detailed 옵션과 함께 사용)",
+    )
+    parser.add_argument(
+        "--compare-models",
+        nargs="+",
+        help="여러 모델을 비교 평가 (모델 경로들을 공백으로 구분)",
+    )
+    parser.add_argument(
+        "--compare-output",
+        type=str,
+        default="",
+        help="모델 비교 리포트 저장 경로 (--compare-models와 함께 사용)",
+    )
 
     args = parser.parse_args()
 
@@ -84,7 +119,77 @@ def main() -> None:
     # 1) Passage 로드
     passages = load_passages(str(passages_path))
 
-    # 2) Evaluator 생성
+    # 2) 여러 모델 비교 모드
+    if args.compare_models:
+        k_vals = _parse_k_values(args.k_values)
+        template_mode = TemplateMode.BGE if args.template == "bge" else TemplateMode.NONE
+        
+        compare_result = compare_models(
+            model_paths=args.compare_models,
+            passages=passages,
+            eval_pairs_path=str(eval_pairs_path),
+            k_values=k_vals,
+            template=template_mode,
+            output_file=args.compare_output or None,
+        )
+        
+        if args.output:
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json.dumps(compare_result, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        return
+
+    # 3) 상세 분석 모드
+    if args.detailed:
+        k_vals = _parse_k_values(args.k_values)
+        template_mode = TemplateMode.BGE if args.template == "bge" else TemplateMode.NONE
+        
+        model = SentenceTransformer(args.model)
+        detailed_result = evaluate_detailed(
+            model=model,
+            passages=passages,
+            eval_pairs_path=str(eval_pairs_path),
+            k_values=k_vals,
+            template=template_mode,
+        )
+        
+        # 리포트 출력
+        print_detailed_report(
+            result=detailed_result,
+            output_file=args.report or None,
+            k_values=k_vals,
+        )
+        
+        # JSON 출력
+        if args.output:
+            result_dict = {
+                "k_values": k_vals,
+                "metrics": detailed_result.metrics,
+                "source_stats": {
+                    source: {
+                        "count": stats["count"],
+                        "avg_mrr": statistics.mean(stats["mrr"]) if stats["mrr"] else 0.0,
+                        "avg_ndcg": statistics.mean(stats["ndcg"]) if stats["ndcg"] else 0.0,
+                        "avg_recall": statistics.mean(stats["recall"]) if stats["recall"] else 0.0,
+                    }
+                    for source, stats in detailed_result.source_stats.items()
+                },
+                "failed_count": len(detailed_result.failed_queries),
+                "failed_queries": detailed_result.failed_queries[:20],  # 상위 20개만
+            }
+            
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json.dumps(result_dict, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        return
+
+    # 4) 기본 평가 모드 (기존 동작)
     k_vals = _parse_k_values(args.k_values)
     template_mode = TemplateMode.BGE if args.template == "bge" else TemplateMode.NONE
     evaluator, normalized_k = build_ir_evaluator(
@@ -95,13 +200,9 @@ def main() -> None:
         template=template_mode,
     )
 
-    # 3) 모델 로드 (SentenceTransformer)
     model = SentenceTransformer(args.model)
-
-    # 4) 평가 실행
     metrics = evaluator(model, output_path=None)
 
-    # 5) 결과 정리 및 출력
     result = {
         "k_values": normalized_k,
         "metrics": metrics,
