@@ -488,10 +488,12 @@ metric:
   goal: maximize       # maximize 또는 minimize
 
 # Early termination 설정 (Bayesian search에서 수렴 시 자동 종료)
+# Hyperband 알고리즘: 여러 run 중 성능이 낮은 run을 조기에 종료하여 리소스 절약
+# epochs=50, eval_steps=300이면 대략 50번의 평가가 가능하므로 max_iter를 충분히 크게 설정
 early_terminate:
   type: hyperband
-  min_iter: 3  # 최소 3번 평가 후 종료 판단
-  max_iter: 10  # 최대 10번 평가 후 종료
+  min_iter: 5  # 최소 5번 평가 후 종료 판단 (너무 일찍 종료 방지)
+  max_iter: 50  # 최대 50번 평가 후 종료 (epochs=50에 맞춤)
   s: 2  # Successive halving factor
 
 # 탐색할 하이퍼파라미터 (넉넉한 범위)
@@ -546,7 +548,7 @@ parameters:
   
   # 배치 크기 (integer, categorical 유지)
   data.batches.bi:
-    values: [8, 16, 32, 64]
+    values: [16, 32, 64, 128, 256]
   
   # 데이터 증폭 (integer, categorical 유지)
   data.multiply:
@@ -593,9 +595,9 @@ fixed:
 project: lexdpr
 entity: zae-park  # WandB 엔티티 (선택사항, 없으면 현재 로그인한 사용자 사용)
 
-# 시간 제한 설정 (기본값: 새벽 1시~8시 KST)
+# 시간 제한 설정 (기본값: 새벽 23시~8시 KST)
 # 여러 날짜에 나눠서 실행할 때 사용
-time_window: "23-8"  # 1시~8시에만 실행 (KST 기준)
+time_window: "23-8"  # 23시~8시에만 실행 (KST 기준)
 timezone: "Asia/Seoul"
 """
 
