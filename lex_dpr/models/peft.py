@@ -109,15 +109,23 @@ def enable_lora_only_train(st_model: SentenceTransformer):
         peft_model.print_trainable_parameters()
     
     # PEFT 모델의 모든 파라미터를 확인하여 LoRA 파라미터만 학습 가능하게 설정
-    # PEFT는 자동으로 base_model을 동결하지만, 명시적으로 확인
+    # PEFT는 자동으로 base_model을 동결하지만, 명시적으로 확인하고 freeze
     trainable_count = 0
+    frozen_count = 0
     for name, param in peft_model.named_parameters():
-        if param.requires_grad:
+        # LoRA 파라미터인지 확인
+        is_lora = "lora_" in name or "lora_A" in name or "lora_B" in name
+        
+        if is_lora:
+            # LoRA 파라미터는 학습 가능하게 유지
+            if not param.requires_grad:
+                param.requires_grad = True
             trainable_count += 1
-            # LoRA 파라미터인지 확인
-            if "lora_" not in name and "lora_A" not in name and "lora_B" not in name:
-                # LoRA가 아닌 파라미터가 학습 가능하면 경고
-                print(f"[enable_lora_only_train] Warning: Non-LoRA parameter '{name}' is trainable")
+        else:
+            # Base model 파라미터는 명시적으로 freeze
+            if param.requires_grad:
+                param.requires_grad = False
+                frozen_count += 1
     
     # SentenceTransformer의 다른 모듈들(pooling 등)은 학습 가능하게 유지
     # 이들은 보통 작은 파라미터 수를 가지므로 학습 가능하게 두는 것이 좋음
