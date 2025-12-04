@@ -175,9 +175,37 @@ def _run_sweep_impl(
     logger.info(f"WandB 프로젝트: {wandb_project}")
     if wandb_entity:
         logger.info(f"WandB 엔티티: {wandb_entity}")
-    logger.info("스윕 생성 중...")
+    logger.info("스윕 생성 중... (WandB API 호출 중, 잠시만 기다려주세요)")
+    logger.info("")
+    logger.info(f"스윕 설정 요약:")
+    logger.info(f"  - 방법: {method}")
+    logger.info(f"  - 파라미터 수: {len(parameters)}")
+    logger.info(f"  - 고정 파라미터 수: {len(fixed_params)}")
+    logger.info("")
     
-    sweep_id = wandb.sweep(sweep_dict, project=wandb_project, entity=wandb_entity)
+    try:
+        import sys
+        logger.info("WandB API에 연결 중...")
+        sys.stdout.flush()  # 강제 출력
+        
+        sweep_id = wandb.sweep(sweep_dict, project=wandb_project, entity=wandb_entity)
+        
+        logger.info("")
+        logger.info(f"✅ WandB API 호출 완료")
+        logger.info(f"   스윕 ID: {sweep_id}")
+        sys.stdout.flush()
+    except Exception as e:
+        logger.error("")
+        logger.error(f"❌ WandB 스윕 생성 실패!")
+        logger.error(f"   에러 타입: {type(e).__name__}")
+        logger.error(f"   에러 메시지: {str(e)}")
+        logger.error("")
+        logger.error("가능한 원인:")
+        logger.error("  1. WandB 설정 파일 스키마 오류 (위 경고 확인)")
+        logger.error("  2. 네트워크 연결 문제")
+        logger.error("  3. WandB 인증 문제 (wandb login 확인)")
+        logger.error("")
+        raise
     
     # 스윕 ID를 설정 파일에 저장
     sweep_config["sweep_id"] = sweep_id
@@ -216,6 +244,25 @@ def _run_sweep_impl(
                         if 0 <= start_hour < 24 and 0 <= end_hour <= 24:
                             time_window_tuple = (start_hour, end_hour)
                             logger.info(f"⏰ 시간 제한 설정: {start_hour}시~{end_hour}시 (KST)")
+                            
+                            # 현재 시간 확인 및 대기 여부 안내
+                            import pytz
+                            tz = pytz.timezone(sweep_config.get("timezone", "Asia/Seoul"))
+                            now = datetime.now(tz)
+                            in_window, next_start_time = _check_time_window(time_window_tuple, sweep_config.get("timezone", "Asia/Seoul"))
+                            if not in_window:
+                                if next_start_time:
+                                    wait_seconds = (next_start_time - now).total_seconds()
+                                    wait_hours = wait_seconds / 3600
+                                    logger.warning("")
+                                    logger.warning("⚠️  현재 시간이 스윕 실행 시간 범위 밖입니다!")
+                                    logger.warning(f"   현재 시간: {now.strftime('%Y-%m-%d %H:%M:%S')} ({timezone_config})")
+                                    logger.warning(f"   실행 시간 범위: {start_hour}시~{end_hour}시")
+                                    logger.warning(f"   다음 시작 시간: {next_start_time.strftime('%Y-%m-%d %H:%M:%S')} ({int(wait_hours)}시간 {int((wait_seconds % 3600) // 60)}분 후)")
+                                    logger.warning("")
+                                    logger.warning("에이전트가 다음 시작 시간까지 대기합니다...")
+                                    logger.warning("(Ctrl+C로 중단하고 나중에 다시 실행할 수 있습니다)")
+                                    logger.warning("")
                     except ValueError:
                         pass
             elif isinstance(time_window_config, (list, tuple)) and len(time_window_config) == 2:
@@ -443,9 +490,8 @@ early_terminate:
 parameters:
   # 학습률 (넉넉한 범위)
   trainer.lr:
-    distribution: log_uniform
-    min: 1e-6
-    max: 1e-3
+    distribution: log_uniform_values
+    values: [1e-6, 1e-5, 1e-4, 1e-3]  # log_uniform_values는 실제 값 범위 지정
   
   # Loss temperature (넉넉한 범위)
   trainer.temperature:
@@ -613,6 +659,17 @@ def sweep_preset(
       poetry run lex-dpr sweep preset --output configs/my_sweep.yaml
       poetry run lex-dpr sweep preset --no-run  # 생성만 하고 실행하지 않음
     """
+    # 로깅 설정 (즉시 출력되도록)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,  # 기존 설정 덮어쓰기
+    )
+    # 로그가 즉시 출력되도록 설정
+    for handler in logging.root.handlers:
+        handler.flush()
+    
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -638,12 +695,14 @@ def sweep_preset(
     logger.info("  - LoRA rank: [4, 8, 16, 32, 64]")
     logger.info("  - LoRA alpha: [8, 16, 32, 64, 128]")
     logger.info("  - LoRA dropout: 0.0 ~ 0.3 (uniform)")
-    logger.info("  - 배치 크기: [1, 2, 4, 8, 16]")
+    logger.info("  - 배치 크기: [8, 16, 32, 64]")
     logger.info("  - 데이터 증폭: [0, 1, 2, 3]")
     logger.info("")
     
     if run:
+        logger.info("=" * 80)
         logger.info("스윕을 시작합니다...")
+        logger.info("=" * 80)
         logger.info("")
         try:
             _run_sweep_impl(output_path, smoke_test=False, run_agent=run_agent)
