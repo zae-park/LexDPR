@@ -573,7 +573,7 @@ fixed:
   # Early Stopping 설정 (학습 효율성)
   trainer.early_stopping.enabled: true
   trainer.early_stopping.metric: "cosine_ndcg@10"
-  trainer.early_stopping.patience: 3
+  trainer.early_stopping.patience: 10
   trainer.early_stopping.min_delta: 0.001
   trainer.early_stopping.mode: "max"
   trainer.early_stopping.restore_best_weights: true
