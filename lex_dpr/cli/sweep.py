@@ -272,7 +272,14 @@ def _run_sweep_impl(
         timezone_config = sweep_config.get("timezone", "Asia/Seoul")
         
         # 에이전트 실행 내부 함수 호출
-        _run_agent_impl(sweep_id=sweep_id, count=None, time_window=time_window_tuple, timezone=timezone_config)
+        _run_agent_impl(
+            sweep_id=sweep_id, 
+            count=None, 
+            time_window=time_window_tuple, 
+            timezone=timezone_config,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
+        )
     else:
         logger.info("")
         logger.info("에이전트를 실행하려면:")
@@ -407,7 +414,7 @@ fixed:
   trainer.epochs: 1  # SMOKE TEST 모드: 1 epoch로 고정
   trainer.eval_steps: 50  # SMOKE TEST 모드: 더 자주 평가
   data.pairs: data/pairs_train.jsonl
-  data.passages: data/merged_corpus.jsonl"""
+  data.passages: data/processed/merged_corpus.jsonl"""
     else:
         fixed_section = """# 고정 파라미터 (스윕 설정 파일에 직접 정의)
 # 이 값들은 모든 스윕 실행에서 동일하게 사용됩니다.
@@ -415,7 +422,7 @@ fixed:
   trainer.epochs: 3
   trainer.eval_steps: 300
   data.pairs: data/pairs_train.jsonl
-  data.passages: data/merged_corpus.jsonl"""
+  data.passages: data/processed/merged_corpus.jsonl"""
     
     return f"""# WandB Sweep 설정 파일
 # 이 파일은 WandB Sweep의 하이퍼파라미터 탐색 범위를 정의합니다.
@@ -576,7 +583,7 @@ fixed:
   
   # 데이터 설정
   data.pairs: data/pairs_train.jsonl
-  data.passages: data/merged_corpus.jsonl
+  data.passages: data/processed/merged_corpus.jsonl
   
   # 기타 설정
   test_run: false  # 실제 학습 모드
@@ -584,7 +591,7 @@ fixed:
 
 # WandB 프로젝트 설정 (선택사항)
 project: lexdpr
-# entity: your-wandb-entity  # WandB 엔티티 (선택사항)
+entity: zae-park  # WandB 엔티티 (선택사항, 없으면 현재 로그인한 사용자 사용)
 
 # 시간 제한 설정 (기본값: 새벽 1시~8시 KST)
 # 여러 날짜에 나눠서 실행할 때 사용
@@ -875,6 +882,8 @@ def _run_agent_impl(
     count: Optional[int] = None,
     time_window: Optional[Tuple[int, int]] = None,
     timezone: str = "Asia/Seoul",
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
 ):
     """에이전트 실행 내부 구현 함수"""
     try:
@@ -908,6 +917,17 @@ def _run_agent_impl(
         base = OmegaConf.merge(base, {"model": model})
     
     cfg = base
+    
+    # WandB 프로젝트 및 엔티티 정보 설정 (함수 파라미터로 받음, 없으면 기본값 사용)
+    if wandb_project is None:
+        wandb_project = "lexdpr"
+    
+    logger.info(f"WandB 프로젝트: {wandb_project}")
+    if wandb_entity:
+        logger.info(f"WandB 엔티티: {wandb_entity}")
+    else:
+        logger.info("WandB 엔티티: (자동 - 현재 로그인한 사용자)")
+    logger.info("")
     
     # WandB 에이전트 실행 함수 정의
     def train_fn():
@@ -967,7 +987,40 @@ def _run_agent_impl(
                     else:
                         logger.info("시간 범위 설정 오류 또는 pytz 미설치로 시간 제한 없이 에이전트를 실행합니다.")
             
-            wandb.agent(sweep_id, function=train_fn, count=count)
+            # wandb.agent()에 프로젝트와 엔티티 정보 전달
+            # WandB는 sweep_id만으로도 작동하지만, project와 entity를 명시하면 더 정확함
+            agent_kwargs = {}
+            if wandb_project:
+                agent_kwargs["project"] = wandb_project
+            # entity는 명시적으로 설정된 경우에만 전달
+            # None이면 전달하지 않아 WandB가 자동으로 현재 사용자 엔티티를 사용하도록 함
+            if wandb_entity:
+                agent_kwargs["entity"] = wandb_entity
+            
+            logger.info(f"WandB Agent 실행:")
+            logger.info(f"  sweep_id: {sweep_id}")
+            logger.info(f"  project: {wandb_project}")
+            logger.info(f"  entity: {wandb_entity or '(자동 - 현재 사용자)'}")
+            logger.info("")
+            
+            # wandb.agent() 호출
+            # sweep_id 형식: entity/project/sweep_id 또는 project/sweep_id
+            # project와 entity를 명시하면 더 정확하게 sweep을 찾을 수 있음
+            try:
+                wandb.agent(sweep_id, function=train_fn, count=count, **agent_kwargs)
+            except Exception as e:
+                logger.error(f"WandB Agent 실행 실패: {e}")
+                logger.error("")
+                logger.error("가능한 원인:")
+                logger.error("  1. Sweep ID가 잘못되었거나 존재하지 않음")
+                logger.error("  2. 엔티티가 일치하지 않음 (현재: {})".format(wandb_entity or "자동 감지"))
+                logger.error("  3. 프로젝트가 일치하지 않음 (현재: {})".format(wandb_project))
+                logger.error("")
+                logger.error("해결 방법:")
+                logger.error("  1. WandB 대시보드에서 실제 sweep URL 확인")
+                logger.error("  2. 설정 파일에 올바른 entity 추가")
+                logger.error("  3. sweep_id 형식 확인: entity/project/sweep_id 또는 project/sweep_id")
+                raise
             if count is not None:  # count가 지정된 경우, 한 번 실행 후 종료
                 break
             # count가 None인 경우, 시간 제한이 있다면 다음 루프에서 다시 체크
@@ -1046,19 +1099,23 @@ def sweep_agent(
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     
+    # 설정 파일 경로 설정
+    if config is None:
+        config = "configs/sweep.yaml"
+    config_path = Path(config)
+    
+    # 설정 파일 로드 (project, entity 등을 읽기 위해 항상 로드)
+    sweep_config = None
+    if config_path.exists():
+        sweep_config = OmegaConf.load(config_path)
+    
     # sweep_id가 없으면 설정 파일에서 읽기
     if sweep_id is None:
-        if config is None:
-            # 기본값으로 configs/sweep.yaml 사용
-            config = "configs/sweep.yaml"
-        
-        config_path = Path(config)
         if not config_path.exists():
             logger.error(f"설정 파일을 찾을 수 없습니다: {config_path}")
             logger.error("먼저 'poetry run lex-dpr sweep preset'으로 스윕 설정 파일을 생성하세요.")
             raise typer.Exit(1)
         
-        sweep_config = OmegaConf.load(config_path)
         sweep_id = sweep_config.get("sweep_id")
         if sweep_id is None:
             logger.error(f"설정 파일에 sweep_id가 없습니다: {config_path}")
@@ -1066,18 +1123,19 @@ def sweep_agent(
             raise typer.Exit(1)
         
         logger.info(f"설정 파일에서 sweep_id를 읽었습니다: {sweep_id}")
-        
-        # 설정 파일에서 time_window와 timezone 읽기 (설정 파일 우선)
+    
+    # 설정 파일에서 time_window와 timezone 읽기 (설정 파일 우선)
+    if sweep_config:
         time_window_config = sweep_config.get("time_window")
-        if time_window_config:
+        if time_window_config and time_window is None:
             if isinstance(time_window_config, str):
-                time_window = time_window_config  # CLI 옵션보다 설정 파일 우선
+                time_window = time_window_config
             elif isinstance(time_window_config, (list, tuple)) and len(time_window_config) == 2:
                 time_window = f"{time_window_config[0]}-{time_window_config[1]}"
         
         timezone_config = sweep_config.get("timezone")
         if timezone_config:
-            timezone = timezone_config  # CLI 옵션보다 설정 파일 우선
+            timezone = timezone_config
     
     logger.info("=" * 80)
     logger.info("🔍 WandB Sweep 에이전트 시작")
@@ -1107,8 +1165,22 @@ def sweep_agent(
         elif isinstance(time_window, (list, tuple)) and len(time_window) == 2:
             time_window_tuple = tuple(time_window)
     
+    # 설정 파일에서 프로젝트 및 엔티티 정보 읽기 (이미 로드된 sweep_config 사용)
+    wandb_project = "lexdpr"
+    wandb_entity = None
+    if sweep_config:
+        wandb_project = sweep_config.get("project", "lexdpr")
+        wandb_entity = sweep_config.get("entity", None)
+    
     # _run_agent_impl 호출
-    _run_agent_impl(sweep_id=sweep_id, count=count, time_window=time_window_tuple, timezone=timezone)
+    _run_agent_impl(
+        sweep_id=sweep_id, 
+        count=count, 
+        time_window=time_window_tuple, 
+        timezone=timezone,
+        wandb_project=wandb_project,
+        wandb_entity=wandb_entity,
+    )
 
 
 @app.command("run")
