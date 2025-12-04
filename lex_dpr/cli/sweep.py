@@ -423,6 +423,10 @@ program: lex_dpr/cli/train.py
 # bayes: Bayesian optimization (효율적, 권장)
 method: bayes
 
+# 베이지안 최적화 초기 샘플 수 (랜덤 샘플을 먼저 실행하여 베이지안 모델 학습)
+# 베이지안 최적화가 제대로 작동하려면 최소 5-10개의 초기 샘플이 필요합니다.
+initial_runs: 10
+
 # 최적화할 메트릭
 metric:
   name: eval/ndcg@10  # WandB에 로깅되는 메트릭 이름
@@ -487,7 +491,7 @@ parameters:
   
   # 배치 크기 (integer, categorical 유지)
   data.batches.bi:
-    values: [1, 2, 4, 8, 16]
+    values: [8, 16, 32, 64]
   
   # 데이터 증폭 (integer, categorical 유지)
   data.multiply:
@@ -496,7 +500,7 @@ parameters:
 # 고정 파라미터 (모든 스윕 실행에서 동일하게 사용)
 fixed:
   # 학습 설정
-  trainer.epochs: 5  # 실제 학습에서는 충분한 에포크 필요
+  trainer.epochs: 50  # 넉넉한 에포크 수 (실제 학습에서는 충분한 에포크 필요)
   trainer.eval_steps: 300  # 평가 주기
   trainer.k: 10  # 평가 시 top-k
   trainer.k_values: [1, 3, 5, 10]  # 평가 메트릭 k 값들

@@ -415,6 +415,26 @@ poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --time-window "1-8
 # 셋째 날: poetry run lex-dpr sweep agent --config configs/my_sweep.yaml --count 10 --time-window "1-8"
 # (같은 스윕에 계속 참여하여 탐색 진행)
 
+# 백그라운드 실행 및 로그 저장 (nohup 사용)
+# 장시간 실행되는 sweep agent를 백그라운드에서 실행하고 로그를 저장:
+nohup poetry run lex-dpr sweep agent --config configs/sweep.yaml --count 10 \
+  > logs/sweep_agent_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+
+# 또는 더 간단하게:
+nohup poetry run lex-dpr sweep agent --config configs/sweep.yaml \
+  > logs/sweep_agent.log 2>&1 &
+
+# 로그 확인:
+tail -f logs/sweep_agent.log
+# 또는
+less logs/sweep_agent.log
+
+# 실행 중인 프로세스 확인:
+ps aux | grep "sweep agent"
+
+# 프로세스 종료 (PID 확인 후):
+kill <PID>
+
 # WandB 대시보드에서 진행 상황 확인:
 # https://wandb.ai/<entity>/<project>/sweeps/<sweep-id>
 
