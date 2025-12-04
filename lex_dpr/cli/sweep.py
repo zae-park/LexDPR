@@ -544,6 +544,14 @@ parameters:
   # 데이터 증폭 (integer, categorical 유지)
   data.multiply:
     values: [0, 1, 2, 3]
+  
+  # 기본 모델 (categorical)
+  model.bi_model:
+    values: [ko-simcse, bge-m3-ko]
+  
+  # 시퀀스 길이 (categorical)
+  model.max_len:
+    values: [128, 256, 512, 768]
 
 # 고정 파라미터 (모든 스윕 실행에서 동일하게 사용)
 fixed:
@@ -562,9 +570,7 @@ fixed:
   trainer.early_stopping.restore_best_weights: true
   
   # 모델 설정
-  model.bi_model: ko-simcse  # 기본 모델 고정
   model.use_bge_template: true  # BGE 템플릿 사용
-  model.max_len: 128  # 시퀀스 길이
   model.peft.enabled: true  # LoRA 활성화
   model.peft.target_modules: ["query", "value"]  # LoRA target modules 고정
   
@@ -699,6 +705,8 @@ def sweep_preset(
     logger.info("  - LoRA dropout: 0.0 ~ 0.3 (uniform)")
     logger.info("  - 배치 크기: [8, 16, 32, 64]")
     logger.info("  - 데이터 증폭: [0, 1, 2, 3]")
+    logger.info("  - 기본 모델: [ko-simcse, bge-m3-ko]")
+    logger.info("  - 시퀀스 길이: [128, 256, 512, 768]")
     logger.info("")
     
     if run:
@@ -911,18 +919,27 @@ def _run_agent_impl(
             logger.info("=" * 80)
             logger.info("🚀 WandB Sweep Run 시작")
             logger.info(f"   wandb.run 존재: {wandb.run is not None}")
+            
+            # wandb.init()이 호출되지 않았으면 명시적으로 호출
+            if wandb.run is None:
+                logger.warning("wandb.run이 None입니다. wandb.init()을 호출합니다...")
+                wandb.init()
+            
             if wandb.run:
                 logger.info(f"   sweep_id: {getattr(wandb.run, 'sweep_id', None)}")
                 logger.info(f"   run_id: {getattr(wandb.run, 'id', None)}")
                 logger.info(f"   wandb.config 파라미터 수: {len(wandb.config) if hasattr(wandb, 'config') else 0}")
                 if hasattr(wandb, 'config') and len(wandb.config) > 0:
-                    logger.info(f"   wandb.config 샘플 (처음 5개):")
-                    for i, (key, value) in enumerate(list(wandb.config.items())[:5]):
+                    logger.info(f"   wandb.config 샘플 (처음 10개):")
+                    for i, (key, value) in enumerate(list(wandb.config.items())[:10]):
                         logger.info(f"     {key} = {value}")
+                else:
+                    logger.error("⚠️  wandb.config가 비어있습니다! Sweep 파라미터가 전달되지 않았습니다.")
+                    logger.error("   이는 wandb.agent()가 제대로 작동하지 않았을 수 있습니다.")
             logger.info("=" * 80)
             logger.info("")
         except Exception as e:
-            logger.warning(f"WandB 상태 확인 실패: {e}")
+            logger.error(f"WandB 상태 확인 실패: {e}", exc_info=True)
         
         # train.py의 main()을 호출하여 WandB Sweep 모드로 실행
         original_argv = sys.argv.copy()
