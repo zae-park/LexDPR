@@ -74,8 +74,8 @@ class WebLoggingEvaluatorWrapper:
             for key, value in result.items():
                 if isinstance(value, (int, float)):
                     # 메트릭 이름 정규화
-                    # "val_cosine_ndcg@10" -> "eval/ndcg@10"
-                    # "val_cosine_recall@5" -> "eval/recall@5"
+                    # "val_cosine_ndcg@10" -> "eval/ndcg_at_10"
+                    # "val_cosine_recall@5" -> "eval/recall_at_5"
                     metric_name = key
                     # "val_" 제거
                     if metric_name.startswith("val_"):
@@ -83,6 +83,8 @@ class WebLoggingEvaluatorWrapper:
                     # "cosine_" 제거 (거리 메트릭은 보통 cosine이므로 생략)
                     if metric_name.startswith("cosine_"):
                         metric_name = metric_name[7:]
+                    # "@" 기호를 "_at_"로 변경 (WandB는 @ 기호를 허용하지 않음)
+                    metric_name = metric_name.replace("@", "_at_")
                     # "eval/" prefix 추가
                     metric_name = f"eval/{metric_name}"
                     metrics[metric_name] = float(value)

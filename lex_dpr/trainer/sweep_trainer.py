@@ -39,11 +39,27 @@ class SweepTrainer:
         # WandB config를 OmegaConf 형식으로 변환
         if wandb_config:
             sweep_overrides = self._convert_wandb_config(wandb_config)
-            logger.info(f"WandB Sweep 파라미터 적용: {list(sweep_overrides.keys())}")
+            logger.info("=" * 80)
+            logger.info("🔍 WandB Sweep 파라미터 적용:")
+            logger.info(f"   적용된 파라미터 수: {len(sweep_overrides.keys())}")
+            logger.info(f"   파라미터 목록: {list(sweep_overrides.keys())}")
+            
+            # 주요 파라미터 값 로깅
+            for key in ['trainer.lr', 'trainer.temperature', 'trainer.weight_decay', 
+                       'trainer.warmup_ratio', 'model.peft.r', 'model.peft.alpha']:
+                if key in wandb_config:
+                    logger.info(f"   {key} = {wandb_config[key]}")
+            logger.info("=" * 80)
+            logger.info("")
+            
             # 기본 설정과 병합
             self.cfg = OmegaConf.merge(base_cfg, sweep_overrides)
         else:
-            logger.warning("WandB config를 찾을 수 없습니다. 기본 설정을 사용합니다.")
+            logger.warning("=" * 80)
+            logger.warning("⚠️  WandB config를 찾을 수 없습니다!")
+            logger.warning("   기본 설정을 사용합니다.")
+            logger.warning("=" * 80)
+            logger.warning("")
             self.cfg = base_cfg
         
         # BiEncoderTrainer 생성
@@ -53,12 +69,30 @@ class SweepTrainer:
         """wandb.config에서 파라미터 읽기"""
         try:
             import wandb
-            if wandb.run and hasattr(wandb.run, 'config'):
-                return dict(wandb.config)
+            logger.info("WandB config 읽기 시도 중...")
+            
+            # wandb.run이 None일 수 있으므로 직접 wandb.config 접근 시도
+            if wandb.run is not None:
+                logger.info(f"wandb.run 존재: True, sweep_id: {getattr(wandb.run, 'sweep_id', None)}")
+                config_dict = dict(wandb.config)
+                logger.info(f"wandb.config에서 읽은 파라미터 수: {len(config_dict)}")
+                logger.info(f"wandb.config 키 목록: {list(config_dict.keys())[:10]}...")  # 처음 10개만
+                return config_dict
+            else:
+                # wandb.run이 None이지만 wandb.config는 접근 가능할 수 있음
+                try:
+                    config_dict = dict(wandb.config)
+                    if config_dict:
+                        logger.info(f"wandb.run이 None이지만 wandb.config에서 읽음: {len(config_dict)}개 파라미터")
+                        return config_dict
+                except:
+                    pass
+                
+                logger.warning("wandb.run이 None입니다. WandB Sweep 모드가 아닐 수 있습니다.")
         except ImportError:
             logger.warning("wandb가 설치되지 않았습니다.")
         except Exception as e:
-            logger.warning(f"wandb.config 읽기 실패: {e}")
+            logger.error(f"wandb.config 읽기 실패: {e}", exc_info=True)
         return None
     
     def _convert_wandb_config(self, wandb_config: dict) -> DictConfig:

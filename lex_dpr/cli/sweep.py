@@ -149,7 +149,7 @@ def _run_sweep_impl(
     
     # OmegaConf 객체를 일반 Python 딕셔너리로 변환
     method = _convert_to_dict(sweep_config.get("method", "random"))
-    metric = _convert_to_dict(sweep_config.get("metric", {"name": "eval/ndcg@10", "goal": "maximize"}))
+    metric = _convert_to_dict(sweep_config.get("metric", {"name": "eval/ndcg_at_10", "goal": "maximize"}))
     parameters = _convert_to_dict(sweep_config.get("parameters", {}))
     
     sweep_dict = {
@@ -429,7 +429,7 @@ method: bayes
 
 # 최적화할 메트릭
 metric:
-  name: eval/ndcg@10  # WandB에 로깅되는 메트릭 이름
+  name: eval/ndcg_at_10  # WandB에 로깅되는 메트릭 이름 (@는 _at_로 변환됨)
   goal: maximize       # maximize 또는 minimize
 
 # 탐색할 하이퍼파라미터
@@ -477,7 +477,7 @@ initial_runs: 10
 
 # 최적화할 메트릭
 metric:
-  name: eval/ndcg@10  # WandB에 로깅되는 메트릭 이름
+  name: eval/ndcg_at_10  # WandB에 로깅되는 메트릭 이름 (@는 _at_로 변환됨)
   goal: maximize       # maximize 또는 minimize
 
 # Early termination 설정 (Bayesian search에서 수렴 시 자동 종료)
@@ -582,7 +582,7 @@ project: lexdpr
 
 # 시간 제한 설정 (기본값: 새벽 1시~8시 KST)
 # 여러 날짜에 나눠서 실행할 때 사용
-time_window: "1-8"  # 1시~8시에만 실행 (KST 기준)
+time_window: "23-8"  # 1시~8시에만 실행 (KST 기준)
 timezone: "Asia/Seoul"
 """
 
@@ -802,7 +802,7 @@ def sweep_start(
     # 스윕 설정 딕셔너리 생성 (WandB 형식)
     # OmegaConf 객체를 일반 Python 딕셔너리로 변환
     method = _convert_to_dict(sweep_config.get("method", "random"))
-    metric = _convert_to_dict(sweep_config.get("metric", {"name": "eval/ndcg@10", "goal": "maximize"}))
+    metric = _convert_to_dict(sweep_config.get("metric", {"name": "eval/ndcg_at_10", "goal": "maximize"}))
     parameters = _convert_to_dict(sweep_config.get("parameters", {}))
     
     sweep_dict = {
@@ -904,7 +904,26 @@ def _run_agent_impl(
     # WandB 에이전트 실행 함수 정의
     def train_fn():
         """WandB 에이전트가 호출하는 학습 함수"""
-        # wandb.config는 이미 설정되어 있음
+        # wandb.agent()가 자동으로 wandb.init()을 호출하고 wandb.config를 설정함
+        # 하지만 명시적으로 확인하고 로깅
+        try:
+            import wandb
+            logger.info("=" * 80)
+            logger.info("🚀 WandB Sweep Run 시작")
+            logger.info(f"   wandb.run 존재: {wandb.run is not None}")
+            if wandb.run:
+                logger.info(f"   sweep_id: {getattr(wandb.run, 'sweep_id', None)}")
+                logger.info(f"   run_id: {getattr(wandb.run, 'id', None)}")
+                logger.info(f"   wandb.config 파라미터 수: {len(wandb.config) if hasattr(wandb, 'config') else 0}")
+                if hasattr(wandb, 'config') and len(wandb.config) > 0:
+                    logger.info(f"   wandb.config 샘플 (처음 5개):")
+                    for i, (key, value) in enumerate(list(wandb.config.items())[:5]):
+                        logger.info(f"     {key} = {value}")
+            logger.info("=" * 80)
+            logger.info("")
+        except Exception as e:
+            logger.warning(f"WandB 상태 확인 실패: {e}")
+        
         # train.py의 main()을 호출하여 WandB Sweep 모드로 실행
         original_argv = sys.argv.copy()
         try:

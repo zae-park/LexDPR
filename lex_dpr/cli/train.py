@@ -155,6 +155,21 @@ def main():
     # WandB Sweep 모드 확인
     is_sweep_mode = _is_wandb_sweep_mode()
     
+    # 디버깅: WandB 상태 확인
+    try:
+        import wandb
+        logger.info(f"WandB 상태 확인:")
+        logger.info(f"  wandb.run 존재: {wandb.run is not None}")
+        if wandb.run:
+            logger.info(f"  wandb.run.sweep_id: {getattr(wandb.run, 'sweep_id', None)}")
+            logger.info(f"  wandb.config 파라미터 수: {len(wandb.config) if hasattr(wandb, 'config') else 0}")
+        logger.info(f"  is_sweep_mode: {is_sweep_mode}")
+        logger.info("")
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"WandB 상태 확인 실패: {e}")
+    
     if is_sweep_mode:
         # SweepTrainer 사용 (wandb.config를 읽어서 cfg에 병합)
         from lex_dpr.trainer.sweep_trainer import SweepTrainer
