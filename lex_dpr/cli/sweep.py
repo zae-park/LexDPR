@@ -436,7 +436,8 @@ metric:
 parameters:
   trainer.lr:
     distribution: log_uniform_values  # log_uniform_values, uniform, categorical
-    values: [1e-6, 1e-5, 1e-4, 1e-3]  # log_uniform_values는 실제 값 범위 지정
+    min: 0.000001  # 1e-6
+    max: 0.001     # 1e-3
   
   trainer.temperature:
     distribution: uniform
@@ -491,7 +492,8 @@ parameters:
   # 학습률 (넉넉한 범위)
   trainer.lr:
     distribution: log_uniform_values
-    values: [1e-6, 1e-5, 1e-4, 1e-3]  # log_uniform_values는 실제 값 범위 지정
+    min: 0.000001  # 1e-6
+    max: 0.001     # 1e-3
   
   # Loss temperature (넉넉한 범위)
   trainer.temperature:
