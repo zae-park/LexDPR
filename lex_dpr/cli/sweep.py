@@ -960,14 +960,21 @@ def _run_agent_impl(
             if wandb.run:
                 logger.info(f"   sweep_id: {getattr(wandb.run, 'sweep_id', None)}")
                 logger.info(f"   run_id: {getattr(wandb.run, 'id', None)}")
-                logger.info(f"   wandb.config 파라미터 수: {len(wandb.config) if hasattr(wandb, 'config') else 0}")
-                if hasattr(wandb, 'config') and len(wandb.config) > 0:
-                    logger.info(f"   wandb.config 샘플 (처음 10개):")
-                    for i, (key, value) in enumerate(list(wandb.config.items())[:10]):
-                        logger.info(f"     {key} = {value}")
-                else:
-                    logger.error("⚠️  wandb.config가 비어있습니다! Sweep 파라미터가 전달되지 않았습니다.")
-                    logger.error("   이는 wandb.agent()가 제대로 작동하지 않았을 수 있습니다.")
+                
+                # wandb.config 안전하게 접근
+                try:
+                    config_dict = dict(wandb.config) if wandb.config else {}
+                    config_count = len(config_dict)
+                    logger.info(f"   wandb.config 파라미터 수: {config_count}")
+                    if config_count > 0:
+                        logger.info(f"   wandb.config 샘플 (처음 10개):")
+                        for i, (key, value) in enumerate(list(config_dict.items())[:10]):
+                            logger.info(f"     {key} = {value}")
+                    else:
+                        logger.warning("⚠️  wandb.config가 비어있습니다! Sweep 파라미터가 전달되지 않았을 수 있습니다.")
+                except Exception as e:
+                    logger.warning(f"⚠️  wandb.config 접근 실패: {e}")
+                    logger.warning("   하지만 학습은 계속 진행됩니다.")
             logger.info("=" * 80)
             logger.info("")
         except Exception as e:
