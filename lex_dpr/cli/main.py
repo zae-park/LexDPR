@@ -798,15 +798,17 @@ def gpu_command(
     action: str = typer.Argument(..., help="동작: list, kill, kill-all"),
     pid: Optional[int] = typer.Argument(None, help="종료할 프로세스 ID (kill 명령어 사용 시)"),
     force: bool = typer.Option(False, "--force", "-f", help="강제 종료"),
+    sudo: bool = typer.Option(False, "--sudo", help="sudo 권한 사용 (다른 사용자의 프로세스 종료 시 필요)"),
 ):
     """
     GPU 프로세스 관리
     
     사용 예시:
-      poetry run lex-dpr gpu list              # GPU 프로세스 목록 확인
-      poetry run lex-dpr gpu kill <PID>        # 특정 프로세스 종료
-      poetry run lex-dpr gpu kill-all          # 모든 GPU 프로세스 종료
-      poetry run lex-dpr gpu kill <PID> --force # 강제 종료
+      poetry run lex-dpr gpu list                    # GPU 프로세스 목록 확인
+      poetry run lex-dpr gpu kill <PID>              # 특정 프로세스 종료
+      poetry run lex-dpr gpu kill <PID> --sudo      # sudo 권한으로 종료
+      poetry run lex-dpr gpu kill-all                # 모든 GPU 프로세스 종료
+      poetry run lex-dpr gpu kill <PID> --force      # 강제 종료
     """
     if action == "list":
         gpu_utils.list_processes()
@@ -815,9 +817,9 @@ def gpu_command(
             logger.error("❌ kill 명령어는 PID가 필요합니다.")
             logger.error("사용법: poetry run lex-dpr gpu kill <PID>")
             raise typer.Exit(1)
-        gpu_utils.kill_process_by_pid(pid, force=force)
+        gpu_utils.kill_process_by_pid(pid, force=force, use_sudo=sudo)
     elif action == "kill-all":
-        gpu_utils.kill_all_processes(force=force)
+        gpu_utils.kill_all_processes(force=force, use_sudo=sudo)
     else:
         logger.error(f"❌ 알 수 없는 동작: {action}")
         logger.error("사용 가능한 동작: list, kill, kill-all")

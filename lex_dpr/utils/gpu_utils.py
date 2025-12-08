@@ -14,7 +14,11 @@ from typing import List, Dict, Optional
 
 
 def get_gpu_processes() -> List[Dict[str, str]]:
-    """GPU를 사용하는 프로세스 목록 반환"""
+    """GPU를 사용하는 프로세스 목록 반환 (compute apps + 일반 프로세스)"""
+    processes = []
+    seen_pids = set()
+    
+    # 방법 1: Compute apps (CUDA compute API 사용 프로세스)
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory,user", 
@@ -24,35 +28,128 @@ def get_gpu_processes() -> List[Dict[str, str]]:
             check=True
         )
         
-        processes = []
         for line in result.stdout.strip().split("\n"):
             if not line.strip():
                 continue
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 4:
+                pid = parts[0]
                 processes.append({
-                    "pid": parts[0],
+                    "pid": pid,
                     "process_name": parts[1],
                     "used_memory_mb": parts[2],
-                    "user": parts[3]
+                    "user": parts[3],
+                    "type": "compute"
                 })
+                seen_pids.add(pid)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    
+    # 방법 2: 일반 nvidia-smi 출력에서 프로세스 정보 추출 (VLLM 등)
+    try:
+        result_full = subprocess.run(
+            ["nvidia-smi"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
         
-        return processes
-    except subprocess.CalledProcessError:
-        return []
-    except FileNotFoundError:
-        print("❌ nvidia-smi를 찾을 수 없습니다. NVIDIA GPU가 설치되어 있는지 확인하세요.")
-        return []
+        if result_full.returncode == 0:
+            import re
+            lines = result_full.stdout.split("\n")
+            in_processes = False
+            
+            for line in lines:
+                # 프로세스 섹션 시작 확인
+                if "Processes:" in line or ("GPU" in line and "PID" in line and "Type" in line):
+                    in_processes = True
+                    continue
+                
+                if in_processes:
+                    # 프로세스 라인 파싱: "|    0  12345    C   python ...  1234MiB |"
+                    if "|" in line and ("MiB" in line or "GiB" in line):
+                        # PID 추출 (일반적으로 5자리 이상 숫자)
+                        pid_matches = re.findall(r'\b(\d{4,})\b', line)
+                        # 메모리 추출
+                        memory_match = re.search(r'(\d+(?:\.\d+)?)\s*(MiB|GiB)', line)
+                        
+                        if pid_matches and memory_match:
+                            pid = pid_matches[0]  # 첫 번째 PID 사용
+                            if pid not in seen_pids:
+                                memory_value = float(memory_match.group(1))
+                                memory_unit = memory_match.group(2)
+                                
+                                # GiB를 MiB로 변환
+                                if memory_unit == "GiB":
+                                    memory_mb = int(memory_value * 1024)
+                                else:
+                                    memory_mb = int(memory_value)
+                                
+                                # 프로세스명 추출 (PID 다음 부분에서 찾기)
+                                proc_name = "unknown"
+                                parts = [p.strip() for p in line.split("|") if p.strip()]
+                                for part in parts:
+                                    # PID 다음에 오는 부분에서 프로세스명 찾기
+                                    if pid in part:
+                                        words = part.split()
+                                        pid_idx = -1
+                                        for i, word in enumerate(words):
+                                            if word == pid:
+                                                pid_idx = i
+                                                break
+                                        if pid_idx >= 0 and pid_idx + 1 < len(words):
+                                            # PID 다음 단어가 프로세스명일 가능성
+                                            next_word = words[pid_idx + 1]
+                                            if next_word not in ["C", "G", "M"]:  # Type이 아닌 경우
+                                                proc_name = next_word
+                                                break
+                                
+                                # VLLM 관련 프로세스명 확인
+                                if "vllm" in line.lower() or "vllm" in proc_name.lower():
+                                    proc_name = "vllm"
+                                
+                                processes.append({
+                                    "pid": pid,
+                                    "process_name": proc_name,
+                                    "used_memory_mb": str(memory_mb),
+                                    "user": "unknown",
+                                    "type": "general"
+                                })
+                                seen_pids.add(pid)
+                    elif line.strip().startswith("+") or (line.strip() and not "|" in line and not "MiB" in line and not "GiB" in line):
+                        # 테이블 끝 또는 다른 섹션 시작
+                        if not any(c in line for c in ["|", "MiB", "GiB", "Processes"]):
+                            break
+    except Exception as e:
+        # 파싱 실패해도 계속 진행
+        pass
+    
+    return processes
 
 
-def kill_process(pid: int, force: bool = False) -> bool:
+def kill_process(pid: int, force: bool = False, use_sudo: bool = False) -> bool:
     """프로세스 종료"""
     try:
-        signal = "SIGKILL" if force else "SIGTERM"
-        subprocess.run(["kill", f"-{9 if force else 15}", str(pid)], check=True)
-        return True
-    except subprocess.CalledProcessError:
-        return False
+        signal = 9 if force else 15
+        cmd = ["kill", f"-{signal}", str(pid)]
+        
+        if use_sudo:
+            cmd = ["sudo"] + cmd
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0:
+            return True
+        elif "Operation not permitted" in result.stderr or "Permission denied" in result.stderr:
+            if not use_sudo:
+                # 권한 문제인 경우 sudo 시도
+                print("⚠️  권한이 없습니다. sudo를 사용하여 시도합니다...")
+                return kill_process(pid, force=force, use_sudo=True)
+            else:
+                print(f"❌ sudo를 사용해도 권한이 없습니다. root 권한이 필요할 수 있습니다.")
+                return False
+        else:
+            return False
     except Exception as e:
         print(f"❌ 프로세스 종료 실패: {e}")
         return False
@@ -75,7 +172,35 @@ def list_processes():
     processes = get_gpu_processes()
     
     if not processes:
-        print("✅ GPU를 사용하는 프로세스가 없습니다.")
+        print("⚠️  compute apps로 등록된 GPU 프로세스가 없습니다.")
+        print("")
+        print("💡 nvidia-smi에서 프로세스가 보이지만 여기서 안 보이는 경우:")
+        print("   1. nvidia-smi를 직접 실행하여 PID 확인:")
+        print("      nvidia-smi")
+        print("   2. 확인한 PID로 직접 종료:")
+        print("      poetry run lex-dpr gpu kill <PID>")
+        print("")
+        print("또는 전체 GPU 메모리 사용량 확인:")
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index,memory.used,memory.total", 
+                 "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            print("GPU 메모리 사용량:")
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():
+                    parts = line.split(",")
+                    if len(parts) >= 3:
+                        gpu_id = parts[0].strip()
+                        used = int(parts[1].strip())
+                        total = int(parts[2].strip())
+                        usage_pct = (used / total * 100) if total > 0 else 0
+                        print(f"  GPU {gpu_id}: {used}MB / {total}MB ({usage_pct:.1f}%)")
+        except Exception:
+            pass
         return
     
     print("=" * 80)
@@ -108,39 +233,84 @@ def list_processes():
     print("  python -m lex_dpr.utils.gpu_utils kill <PID> --force # 강제 종료")
 
 
-def kill_process_by_pid(pid: int, force: bool = False):
+def kill_process_by_pid(pid: int, force: bool = False, use_sudo: bool = False):
     """PID로 프로세스 종료"""
     processes = get_gpu_processes()
     pid_str = str(pid)
     
     # 해당 PID가 GPU 프로세스인지 확인
     found = False
+    proc_info = None
     for proc in processes:
         if proc["pid"] == pid_str:
             found = True
+            proc_info = proc
             name = proc["process_name"]
             memory = format_memory(proc["used_memory_mb"])
-            print(f"프로세스 발견: PID={pid}, 이름={name}, 메모리={memory}")
+            user = proc.get("user", "unknown")
+            print(f"프로세스 발견: PID={pid}, 이름={name}, 메모리={memory}, 사용자={user}")
             break
     
     if not found:
-        print(f"⚠️  PID {pid}는 GPU를 사용하는 프로세스가 아닙니다.")
+        # 프로세스 정보 확인 시도
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "user,comm,pid"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                print(f"⚠️  PID {pid}는 GPU 프로세스 목록에 없지만 시스템 프로세스입니다.")
+                print(f"프로세스 정보:\n{result.stdout}")
+            else:
+                print(f"⚠️  PID {pid}를 찾을 수 없습니다.")
+        except Exception:
+            print(f"⚠️  PID {pid} 정보를 확인할 수 없습니다.")
+        
         response = input("그래도 종료하시겠습니까? (y/N): ")
         if response.lower() != "y":
             print("취소되었습니다.")
             return
     
-    if kill_process(pid, force=force):
+    # 프로세스 소유자 확인
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "user="],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            owner = result.stdout.strip()
+            import os
+            current_user = os.getenv("USER") or os.getenv("USERNAME", "unknown")
+            if owner != current_user:
+                print(f"⚠️  이 프로세스는 '{owner}' 사용자의 것입니다. (현재 사용자: {current_user})")
+                if not use_sudo:
+                    response = input("sudo를 사용하여 종료하시겠습니까? (y/N): ")
+                    if response.lower() == "y":
+                        use_sudo = True
+                    else:
+                        print("취소되었습니다.")
+                        return
+    except Exception:
+        pass
+    
+    if kill_process(pid, force=force, use_sudo=use_sudo):
         print(f"✅ 프로세스 {pid}를 종료했습니다.")
     else:
         print(f"❌ 프로세스 {pid} 종료에 실패했습니다.")
         if not force:
             response = input("강제 종료를 시도하시겠습니까? (y/N): ")
             if response.lower() == "y":
-                if kill_process(pid, force=True):
+                if kill_process(pid, force=True, use_sudo=use_sudo):
                     print(f"✅ 프로세스 {pid}를 강제 종료했습니다.")
                 else:
                     print(f"❌ 강제 종료에도 실패했습니다.")
+                    if not use_sudo:
+                        print("💡 sudo 권한이 필요할 수 있습니다:")
+                        print(f"   sudo kill -9 {pid}")
 
 
 def kill_all_processes(force: bool = False):
