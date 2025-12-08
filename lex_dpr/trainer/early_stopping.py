@@ -80,14 +80,41 @@ class EarlyStoppingCallback:
             return False
         
         # 메트릭 키 찾기 (정확한 키 또는 유사한 키)
+        # validation loss는 명시적으로 제외 (초반 불안정성 때문에 early stopping에 부적합)
         metric_value = None
-        for key in [self.metric_key, f"val_{self.metric_key}", f"cosine_{self.metric_key}"]:
+        
+        # 검색할 키 목록 (우선순위 순)
+        search_keys = [
+            self.metric_key,  # "cosine_ndcg@10" (정확한 키)
+            f"val_{self.metric_key}",  # "val_cosine_ndcg@10"
+            f"cosine_{self.metric_key}",  # "cosine_cosine_ndcg@10" (중복이지만 호환성)
+            self.metric_key.replace("@", "_at_"),  # "cosine_ndcg_at_10" (WandB 형식)
+            f"val_{self.metric_key.replace('@', '_at_')}",  # "val_cosine_ndcg_at_10"
+        ]
+        
+        # validation loss 관련 키는 제외
+        excluded_patterns = ["val_loss", "loss", "val_cosine_loss"]
+        
+        for key in search_keys:
             if key in metrics:
+                # validation loss는 명시적으로 제외 (early stopping에 부적합)
+                if any(pattern in key.lower() for pattern in excluded_patterns):
+                    # 단, 사용자가 명시적으로 loss를 요청한 경우는 허용 (하지만 경고)
+                    if "loss" in self.metric_key.lower():
+                        logger.warning(f"⚠️  Early Stopping이 loss 메트릭을 사용하고 있습니다. "
+                                     f"초반 불안정성으로 인해 조기 종료될 수 있습니다. "
+                                     f"NDCG@10 같은 retrieval 메트릭 사용을 권장합니다.")
+                    else:
+                        continue  # loss는 건너뛰기
+                
                 metric_value = float(metrics[key])
+                logger.debug(f"Early Stopping: 메트릭 '{key}' = {metric_value:.4f} 사용")
                 break
         
         if metric_value is None:
-            logger.warning(f"Early Stopping: 메트릭 '{self.metric_key}'를 찾을 수 없습니다. 사용 가능한 키: {list(metrics.keys())}")
+            logger.warning(f"Early Stopping: 메트릭 '{self.metric_key}'를 찾을 수 없습니다.")
+            logger.warning(f"사용 가능한 키: {list(metrics.keys())}")
+            logger.warning("Early Stopping을 건너뜁니다. (메트릭을 찾을 수 없음)")
             return False
         
         # 개선 여부 확인
