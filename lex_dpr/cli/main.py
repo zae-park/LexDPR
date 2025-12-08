@@ -25,6 +25,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 from lex_dpr.cli import train, embed, api, config, eval_cli, sweep
 from lex_dpr.crawler.crawl_precedents import PrecedentCrawler, REQUEST_DELAY
 from lex_dpr.data_processing import make_pairs as make_pairs_mod
+from lex_dpr.utils import gpu_utils
 
 logger = logging.getLogger("lex_dpr.cli")
 
@@ -790,6 +791,37 @@ def visualize_command(
             logger.warning("⚠️ 학습 전 모델이 제공되지 않아 비교를 건너뜁니다. --model-before를 지정하세요.")
     
     logger.info(f"✅ 시각화 완료! 결과는 {output_dir_path}에 저장되었습니다.")
+
+
+@app.command("gpu")
+def gpu_command(
+    action: str = typer.Argument(..., help="동작: list, kill, kill-all"),
+    pid: Optional[int] = typer.Argument(None, help="종료할 프로세스 ID (kill 명령어 사용 시)"),
+    force: bool = typer.Option(False, "--force", "-f", help="강제 종료"),
+):
+    """
+    GPU 프로세스 관리
+    
+    사용 예시:
+      poetry run lex-dpr gpu list              # GPU 프로세스 목록 확인
+      poetry run lex-dpr gpu kill <PID>        # 특정 프로세스 종료
+      poetry run lex-dpr gpu kill-all          # 모든 GPU 프로세스 종료
+      poetry run lex-dpr gpu kill <PID> --force # 강제 종료
+    """
+    if action == "list":
+        gpu_utils.list_processes()
+    elif action == "kill":
+        if pid is None:
+            logger.error("❌ kill 명령어는 PID가 필요합니다.")
+            logger.error("사용법: poetry run lex-dpr gpu kill <PID>")
+            raise typer.Exit(1)
+        gpu_utils.kill_process_by_pid(pid, force=force)
+    elif action == "kill-all":
+        gpu_utils.kill_all_processes(force=force)
+    else:
+        logger.error(f"❌ 알 수 없는 동작: {action}")
+        logger.error("사용 가능한 동작: list, kill, kill-all")
+        raise typer.Exit(1)
 
 
 def main():
