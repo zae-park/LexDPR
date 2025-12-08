@@ -1021,15 +1021,36 @@ def _run_agent_impl(
                 logger.error("   4. 더 작은 모델을 사용하세요")
                 logger.error("")
                 
-                # WandB에 실패 원인 로깅
+                # WandB에 실패 원인 로깅 및 태그 추가
                 if wandb.run:
                     try:
+                        # 태그 추가 (WandB 대시보드에서 필터링 가능)
+                        if not hasattr(wandb.run, 'tags') or wandb.run.tags is None:
+                            wandb.run.tags = []
+                        wandb.run.tags.append("OOM")
+                        wandb.run.tags.append("failed")
+                        
+                        # Summary에 실패 정보 추가
                         wandb.run.summary["status"] = "failed"
                         wandb.run.summary["failure_reason"] = "OOM"
+                        wandb.run.summary["failure_type"] = "memory"  # 메모리 관련 실패
                         wandb.run.summary["error_message"] = str(e)[:500]  # 메시지 길이 제한
+                        
+                        # 현재 설정 정보도 기록 (OOM 원인 분석용)
+                        try:
+                            config_dict = dict(wandb.config) if wandb.config else {}
+                            if "data.batches.bi" in config_dict:
+                                wandb.run.summary["batch_size"] = config_dict["data.batches.bi"]
+                            if "model.max_len" in config_dict:
+                                wandb.run.summary["max_len"] = config_dict["model.max_len"]
+                            if "model.bi_model" in config_dict:
+                                wandb.run.summary["model"] = config_dict["model.bi_model"]
+                        except Exception:
+                            pass
+                        
                         wandb.finish(exit_code=1)
-                    except Exception:
-                        pass
+                    except Exception as e_inner:
+                        logger.warning(f"WandB 로깅 실패: {e_inner}")
                 
                 # 예외를 다시 발생시켜 WandB가 실패로 기록하도록 함
                 raise
