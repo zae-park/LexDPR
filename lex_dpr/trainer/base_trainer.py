@@ -323,6 +323,7 @@ class BiEncoderTrainer:
         early_stopping = None
         
         if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
+            # IR evaluator 생성
             base_evaluator, _ = build_ir_evaluator(
                 passages=self.passages,
                 eval_pairs_path=self.cfg.trainer.eval_pairs,
@@ -330,6 +331,22 @@ class BiEncoderTrainer:
                 k_vals=self.cfg.trainer.k_values,
                 template=self.template_mode,
             )
+            
+            # Validation loss evaluator 추가
+            from ..eval import ValidationLossEvaluator
+            val_loss_evaluator = ValidationLossEvaluator(
+                model=self.model,
+                passages=self.passages,
+                eval_pairs_path=self.cfg.trainer.eval_pairs,
+                read_jsonl_fn=read_jsonl,
+                temperature=self.cfg.trainer.temperature,
+                template=self.template_mode,
+                batch_size=min(32, self.batch_size),
+            )
+            
+            # 두 evaluator를 결합
+            from sentence_transformers.evaluation import SequentialEvaluator
+            base_evaluator = SequentialEvaluator([val_loss_evaluator, base_evaluator])
             
             # Early Stopping 설정 확인
             early_stopping_config = getattr(self.cfg.trainer, "early_stopping", None)
