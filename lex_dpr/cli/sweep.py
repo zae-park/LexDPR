@@ -9,6 +9,7 @@ WandB Sweep CLI 명령어
 """
 
 import logging
+import os
 import sys
 import time
 import warnings
@@ -23,6 +24,12 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 import typer
 from omegaconf import OmegaConf, DictConfig
+
+# PyTorch import (OOM 처리용)
+try:
+    import torch
+except ImportError:
+    torch = None
 
 from lex_dpr.cli.train import _get_config_path
 from lex_dpr.trainer.sweep_trainer import SweepTrainer
@@ -546,9 +553,11 @@ parameters:
     min: 0.0
     max: 0.3
   
-  # 배치 크기 (integer, categorical 유지)
+  # 배치 크기 (메모리 효율적인 범위로 제한)
+  # 작은 배치 크기(16-64)로도 contrastive learning에서 충분히 효과적입니다.
+  # 배치 내 negative sampling 덕분에 작은 배치로도 학습이 가능합니다.
   data.batches.bi:
-    values: [16, 32, 64, 128, 256]
+    values: [16, 32, 64]  # 128, 256 제거 (OOM 방지)
   
   # 데이터 증폭 (integer, categorical 유지)
   data.multiply:
@@ -558,17 +567,18 @@ parameters:
   model.bi_model:
     values: [ko-simcse, bge-m3-ko]
   
-  # 시퀀스 길이 (categorical)
+  # 시퀀스 길이 (메모리 효율적인 범위로 제한)
+  # 768은 메모리 사용량이 매우 크므로 제거
   model.max_len:
-    values: [128, 256, 512, 768]
+    values: [128, 256, 384]  # 512, 768 제거 (OOM 방지)
 
 # 고정 파라미터 (모든 스윕 실행에서 동일하게 사용)
 fixed:
   # 학습 설정
   trainer.epochs: 50  # 넉넉한 에포크 수 (실제 학습에서는 충분한 에포크 필요)
   trainer.eval_steps: 300  # 평가 주기
-  trainer.k: 10  # 평가 시 top-k
-  trainer.k_values: [1, 3, 5, 10]  # 평가 메트릭 k 값들
+  trainer.k: 20  # 평가 시 top-k
+  trainer.k_values: [1, 3, 5, 10, 20]  # 평가 메트릭 k 값들
   
   # Early Stopping 설정 (학습 효율성)
   trainer.early_stopping.enabled: true
@@ -712,10 +722,10 @@ def sweep_preset(
     logger.info("  - LoRA rank: [4, 8, 16, 32, 64]")
     logger.info("  - LoRA alpha: [8, 16, 32, 64, 128]")
     logger.info("  - LoRA dropout: 0.0 ~ 0.3 (uniform)")
-    logger.info("  - 배치 크기: [8, 16, 32, 64]")
+    logger.info("  - 배치 크기: [16, 32, 64] (메모리 효율적 범위)")
     logger.info("  - 데이터 증폭: [0, 1, 2, 3]")
     logger.info("  - 기본 모델: [ko-simcse, bge-m3-ko]")
-    logger.info("  - 시퀀스 길이: [128, 256, 512, 768]")
+    logger.info("  - 시퀀스 길이: [128, 256, 512] (메모리 효율적 범위)")
     logger.info("")
     
     if run:
@@ -969,8 +979,67 @@ def _run_agent_impl(
             sys.argv = ["train"]
             from lex_dpr.cli import train as train_module
             train_module.main()
+        except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
+            # CUDA OOM 에러 처리 (RuntimeError와 torch.cuda.OutOfMemoryError 모두 처리)
+            error_msg = str(e).lower()
+            is_oom = (
+                "out of memory" in error_msg or 
+                "cuda" in error_msg or 
+                isinstance(e, torch.cuda.OutOfMemoryError)
+            )
+            
+            if is_oom:
+                import wandb
+                import torch
+                
+                logger.error("=" * 80)
+                logger.error("❌ CUDA Out of Memory (OOM) 발생!")
+                logger.error(f"   에러 메시지: {e}")
+                logger.error("=" * 80)
+                logger.error("")
+                
+                # CUDA 메모리 정리 시도
+                try:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                        logger.info("CUDA 캐시 정리 완료")
+                except Exception:
+                    pass
+                
+                logger.error("💡 해결 방법:")
+                logger.error("   1. 배치 크기를 줄이세요 (data.batches.bi)")
+                logger.error("   2. 시퀀스 길이를 줄이세요 (model.max_len)")
+                logger.error("   3. Gradient accumulation steps를 늘리세요")
+                logger.error("   4. 더 작은 모델을 사용하세요")
+                logger.error("")
+                
+                # WandB에 실패 원인 로깅
+                if wandb.run:
+                    try:
+                        wandb.run.summary["status"] = "failed"
+                        wandb.run.summary["failure_reason"] = "OOM"
+                        wandb.run.summary["error_message"] = str(e)[:500]  # 메시지 길이 제한
+                        wandb.finish(exit_code=1)
+                    except Exception:
+                        pass
+                
+                # 예외를 다시 발생시켜 WandB가 실패로 기록하도록 함
+                raise
+            else:
+                # 다른 RuntimeError는 그대로 전파
+                raise
         finally:
             sys.argv = original_argv
+            # 각 run 사이에 메모리 정리
+            try:
+                import torch
+                import gc
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
+            except Exception:
+                pass
     
     # WandB 에이전트 실행
     try:
@@ -1004,6 +1073,12 @@ def _run_agent_impl(
             logger.info(f"  project: {wandb_project}")
             logger.info(f"  entity: {wandb_entity or '(자동 - 현재 사용자)'}")
             logger.info("")
+            
+            # CUDA 메모리 할당 최적화 환경 변수 설정
+            if torch and torch.cuda.is_available():
+                if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+                    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                    logger.info("CUDA 메모리 할당 최적화 활성화: expandable_segments:True")
             
             # wandb.agent() 호출
             # sweep_id 형식: entity/project/sweep_id 또는 project/sweep_id
