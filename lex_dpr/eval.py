@@ -1,4 +1,4 @@
-# lex_dpr/utils/eval.py
+# lex_dpr/eval.py
 from __future__ import annotations
 
 from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple
@@ -10,7 +10,7 @@ from sentence_transformers import losses
 
 from .models.encoders import BiEncoder
 from .models.templates import TemplateMode, tq, tp
-from ..utils.io import read_jsonl
+from .utils.io import read_jsonl
 
 
 def _normalize_k_values(k_vals: Sequence[int] | int | None, corpus_size: int) -> List[int]:
