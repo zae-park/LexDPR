@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import random
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -37,7 +38,11 @@ def _resolve_template_mode(cfg_model) -> TemplateMode:
 def _apply_multiply(examples: List[InputExample], multiply: int) -> List[InputExample]:
     if multiply <= 1:
         return examples
-    return examples * multiply
+    # 단순 반복 대신 셔플을 적용하여 같은 예제가 연속으로 나타나지 않도록 함
+    # 이렇게 하면 같은 데이터가 반복되어도 배치 내에서 다양성이 유지됨
+    multiplied = examples * multiply
+    random.shuffle(multiplied)
+    return multiplied
 
 
 @dataclass
