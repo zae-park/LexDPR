@@ -685,7 +685,7 @@ def analyze_pairs_command(
 @app.command("visualize")
 def visualize_command(
     model: str = typer.Option(..., "--model", "-m", help="모델 경로 (체크포인트 또는 HuggingFace 모델)"),
-    passages: str = typer.Option("data/merged_corpus.jsonl", "--passages", "-p", help="Passage corpus JSONL 경로"),
+    passages: str = typer.Option("data/processed/merged_corpus.jsonl", "--passages", "-p", help="Passage corpus JSONL 경로"),
     eval_pairs: str = typer.Option("data/pairs_eval.jsonl", "--eval-pairs", "-e", help="평가 쌍 JSONL 경로"),
     output_dir: str = typer.Option("visualizations", "--output", "-o", help="시각화 결과 저장 디렉토리"),
     method: str = typer.Option("umap", "--method", help="차원 축소 방법 (tsne 또는 umap)"),
