@@ -353,35 +353,9 @@ class BiEncoderTrainer:
             from sentence_transformers.evaluation import SequentialEvaluator
             base_evaluator = SequentialEvaluator([val_loss_evaluator, base_evaluator])
             
-            # Early Stopping 설정 확인
-            early_stopping_config = getattr(self.cfg.trainer, "early_stopping", None)
-            if early_stopping_config and getattr(early_stopping_config, "enabled", False):
-                metric_key = getattr(early_stopping_config, "metric", "cosine_ndcg@10")
-                patience = int(getattr(early_stopping_config, "patience", 3))
-                min_delta = float(getattr(early_stopping_config, "min_delta", 0.0))
-                mode = getattr(early_stopping_config, "mode", "max")
-                restore_best = getattr(early_stopping_config, "restore_best_weights", True)
-                
-                # Warmup 스텝 수를 early stopping에 전달하여 warmup 기간 동안 더 관대하게 처리
-                warmup_steps = getattr(self.artifacts, "warmup_steps", 0)
-                early_stopping = EarlyStoppingCallback(
-                    model=self.model,
-                    out_dir=self.cfg.out_dir,
-                    metric_key=metric_key,
-                    patience=patience,
-                    min_delta=min_delta,
-                    mode=mode,
-                    restore_best_weights=restore_best,
-                    warmup_steps=warmup_steps,
-                )
-                logger.info("Early Stopping 활성화됨")
-            
-            # 래퍼 체인: Early Stopping -> Web Logging -> Base Evaluator
+            # 래퍼 체인: Web Logging -> Base Evaluator
+            # Early Stopping은 warmup_steps 계산 후에 추가됨
             current_evaluator = base_evaluator
-            
-            # Early Stopping 래퍼 추가
-            if early_stopping:
-                current_evaluator = EarlyStoppingEvaluatorWrapper(current_evaluator, early_stopping)
             
             # 웹 로깅 래퍼 추가
             if self.web_logger and self.web_logger.is_active:
@@ -404,6 +378,40 @@ class BiEncoderTrainer:
         # Cosine annealing에 더 빨리 접어들도록 하여 학습 안정성 향상
         warmup_ratio = float(getattr(self.cfg.trainer, "warmup_ratio", 0.05))
         warmup_steps = max(10, int(total_steps * warmup_ratio))
+        
+        # Early Stopping 설정 (warmup_steps 계산 후)
+        early_stopping_config = getattr(self.cfg.trainer, "early_stopping", None)
+        if early_stopping_config and getattr(early_stopping_config, "enabled", False):
+            metric_key = getattr(early_stopping_config, "metric", "cosine_ndcg@10")
+            patience = int(getattr(early_stopping_config, "patience", 3))
+            min_delta = float(getattr(early_stopping_config, "min_delta", 0.0))
+            mode = getattr(early_stopping_config, "mode", "max")
+            restore_best = getattr(early_stopping_config, "restore_best_weights", True)
+            
+            # Warmup 스텝 수를 early stopping에 전달하여 warmup 기간 동안 더 관대하게 처리
+            early_stopping = EarlyStoppingCallback(
+                model=self.model,
+                out_dir=self.cfg.out_dir,
+                metric_key=metric_key,
+                patience=patience,
+                min_delta=min_delta,
+                mode=mode,
+                restore_best_weights=restore_best,
+                warmup_steps=warmup_steps,
+            )
+            logger.info(f"Early Stopping 활성화됨 (warmup_steps={warmup_steps})")
+            
+            # Early Stopping 래퍼를 evaluator에 추가
+            # evaluator가 이미 WebLoggingEvaluatorWrapper로 래핑되어 있을 수 있으므로
+            # 내부 evaluator를 찾아서 Early Stopping 래퍼를 추가
+            if evaluator:
+                # WebLoggingEvaluatorWrapper인 경우 내부 evaluator에 래핑
+                if isinstance(evaluator, WebLoggingEvaluatorWrapper):
+                    inner_evaluator = evaluator.evaluator
+                    wrapped_evaluator = EarlyStoppingEvaluatorWrapper(inner_evaluator, early_stopping)
+                    evaluator.evaluator = wrapped_evaluator
+                else:
+                    evaluator = EarlyStoppingEvaluatorWrapper(evaluator, early_stopping)
 
         return TrainerArtifacts(
             loader=loader,

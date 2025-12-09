@@ -983,16 +983,18 @@ def _run_agent_impl(
         # train.py의 main()을 호출하여 WandB Sweep 모드로 실행
         original_argv = sys.argv.copy()
         try:
+            import torch  # torch를 먼저 import하여 except 절에서 사용 가능하도록 함
             sys.argv = ["train"]
             from lex_dpr.cli import train as train_module
             train_module.main()
-        except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
+        except RuntimeError as e:
             # CUDA OOM 에러 처리 (RuntimeError와 torch.cuda.OutOfMemoryError 모두 처리)
             error_msg = str(e).lower()
+            # torch.cuda.OutOfMemoryError는 RuntimeError의 서브클래스이므로 isinstance로 확인
             is_oom = (
                 "out of memory" in error_msg or 
                 "cuda" in error_msg or 
-                isinstance(e, torch.cuda.OutOfMemoryError)
+                (hasattr(torch.cuda, 'OutOfMemoryError') and isinstance(e, torch.cuda.OutOfMemoryError))
             )
             
             if is_oom:
