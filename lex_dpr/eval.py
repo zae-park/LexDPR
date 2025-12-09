@@ -35,13 +35,44 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
     """
     
     def __init__(self, *args, query_batch_size: int = 32, **kwargs):
+        # corpus 딕셔너리를 먼저 저장 (super().__init__() 전에)
+        corpus = kwargs.get('corpus', None)
+        if corpus is None and len(args) > 1:
+            # 위치 인자로 전달된 경우
+            corpus = args[1] if len(args) > 1 else None
+        
         super().__init__(*args, **kwargs)
         self.query_batch_size = query_batch_size
+        
+        # InformationRetrievalEvaluator는 corpus를 딕셔너리로 받지만, 
+        # 내부적으로 corpus_ids와 corpus_texts로 변환할 수 있음
+        # 원본 corpus 딕셔너리를 보존하기 위해 저장
+        if corpus is not None and isinstance(corpus, dict):
+            self._corpus_dict = corpus.copy()
+        else:
+            self._corpus_dict = None
     
     def __call__(self, model, output_path: str = None, epoch: int = -1, steps: int = -1) -> Dict[str, float]:
         """쿼리를 배치로 처리하여 평가"""
         # Corpus를 먼저 인코딩 (한 번만)
-        corpus_texts = list(self.corpus.values())
+        # InformationRetrievalEvaluator는 corpus를 딕셔너리로 받지만, 내부적으로 리스트로 변환할 수 있음
+        # corpus_ids와 corpus_texts 속성이 있는지 확인
+        if hasattr(self, 'corpus_ids') and hasattr(self, 'corpus_texts'):
+            # InformationRetrievalEvaluator가 내부적으로 변환한 경우
+            corpus_ids = self.corpus_ids
+            corpus_texts = self.corpus_texts
+        elif self._corpus_dict is not None:
+            # 원본 딕셔너리 사용
+            corpus_ids = list(self._corpus_dict.keys())
+            corpus_texts = list(self._corpus_dict.values())
+        elif isinstance(self.corpus, dict):
+            corpus_ids = list(self.corpus.keys())
+            corpus_texts = list(self.corpus.values())
+        else:
+            # 리스트인 경우 (일반적으로는 발생하지 않지만 안전성을 위해)
+            corpus_ids = list(range(len(self.corpus)))
+            corpus_texts = list(self.corpus)
+        
         corpus_embeddings = model.encode(
             corpus_texts,
             batch_size=self.batch_size,
@@ -52,8 +83,13 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
         corpus_embeddings = torch.from_numpy(corpus_embeddings).float()
         
         # 쿼리를 배치로 인코딩
-        query_ids = list(self.queries.keys())
-        query_texts = [self.queries[qid] for qid in query_ids]
+        if isinstance(self.queries, dict):
+            query_ids = list(self.queries.keys())
+            query_texts = [self.queries[qid] for qid in query_ids]
+        else:
+            # 리스트인 경우
+            query_ids = list(range(len(self.queries)))
+            query_texts = list(self.queries)
         
         # 배치로 쿼리 인코딩
         query_embeddings_list = []
@@ -81,7 +117,6 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
         
         for idx, qid in enumerate(query_ids):
             query_scores = scores[idx].cpu().numpy()
-            corpus_ids = list(self.corpus.keys())
             max_k = max(all_k_values) if all_k_values else 10
             top_k_indices = np.argsort(query_scores)[::-1][:max_k]
             top_k_ids = [corpus_ids[i] for i in top_k_indices]
