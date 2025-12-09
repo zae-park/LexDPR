@@ -329,7 +329,9 @@ class BiEncoderTrainer:
         
         if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
             # IR evaluator 생성 (평가 배치 크기 설정: 메모리 절약)
-            eval_batch_size = min(32, self.batch_size)  # 평가는 작은 배치로
+            # InformationRetrievalEvaluator는 쿼리를 하나씩 처리하므로,
+            # batch_size는 corpus encoding에만 사용됨 (더 크게 설정 가능)
+            eval_batch_size = min(64, max(32, self.batch_size))  # 평가는 적당한 배치로 (corpus encoding용)
             base_evaluator, _ = build_ir_evaluator(
                 passages=self.passages,
                 eval_pairs_path=self.cfg.trainer.eval_pairs,

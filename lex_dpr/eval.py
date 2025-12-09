@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple
 
 import torch
+import numpy as np
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.evaluation import InformationRetrievalEvaluator
 from sentence_transformers import losses
@@ -25,6 +26,138 @@ def _normalize_k_values(k_vals: Sequence[int] | int | None, corpus_size: int) ->
     return [k for k in values if 1 <= k <= corpus_size] or [1]
 
 
+class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
+    """
+    쿼리를 배치로 처리하는 InformationRetrievalEvaluator
+    
+    기본 InformationRetrievalEvaluator는 쿼리를 하나씩 처리하지만,
+    이 클래스는 쿼리를 배치로 인코딩하여 평가 속도를 향상시킵니다.
+    """
+    
+    def __init__(self, *args, query_batch_size: int = 32, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.query_batch_size = query_batch_size
+    
+    def __call__(self, model, output_path: str = None, epoch: int = -1, steps: int = -1) -> Dict[str, float]:
+        """쿼리를 배치로 처리하여 평가"""
+        # Corpus를 먼저 인코딩 (한 번만)
+        corpus_texts = list(self.corpus.values())
+        corpus_embeddings = model.encode(
+            corpus_texts,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
+        corpus_embeddings = torch.from_numpy(corpus_embeddings).float()
+        
+        # 쿼리를 배치로 인코딩
+        query_ids = list(self.queries.keys())
+        query_texts = [self.queries[qid] for qid in query_ids]
+        
+        # 배치로 쿼리 인코딩
+        query_embeddings_list = []
+        for i in range(0, len(query_texts), self.query_batch_size):
+            batch_texts = query_texts[i:i + self.query_batch_size]
+            batch_embeddings = model.encode(
+                batch_texts,
+                batch_size=self.query_batch_size,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+            )
+            query_embeddings_list.append(torch.from_numpy(batch_embeddings).float())
+        
+        query_embeddings = torch.cat(query_embeddings_list, dim=0)
+        
+        # 모든 쿼리에 대해 점수 계산
+        scores = query_embeddings @ corpus_embeddings.T  # [n_queries, n_corpus]
+        
+        # 각 쿼리에 대해 메트릭 계산
+        results = {}
+        all_k_values = list(set(self.ndcg_at_k + self.mrr_at_k + self.map_at_k + self.accuracy_at_k + self.precision_recall_at_k))
+        for k in all_k_values:
+            results[k] = {}
+        
+        for idx, qid in enumerate(query_ids):
+            query_scores = scores[idx].cpu().numpy()
+            corpus_ids = list(self.corpus.keys())
+            max_k = max(all_k_values) if all_k_values else 10
+            top_k_indices = np.argsort(query_scores)[::-1][:max_k]
+            top_k_ids = [corpus_ids[i] for i in top_k_indices]
+            
+            relevant_docs = self.relevant_docs.get(qid, set())
+            
+            # 각 k 값에 대해 메트릭 계산
+            for k in all_k_values:
+                top_k = top_k_ids[:k]
+                hits = len(set(top_k) & relevant_docs)
+                
+                # Accuracy@k (Recall@k와 유사)
+                if k in self.accuracy_at_k:
+                    results[k].setdefault('accuracy', []).append(1.0 if hits > 0 else 0.0)
+                
+                # Precision@k
+                if k in self.precision_recall_at_k:
+                    precision = hits / k if k > 0 else 0.0
+                    results[k].setdefault('precision', []).append(precision)
+                
+                # Recall@k
+                if k in self.precision_recall_at_k:
+                    recall = hits / len(relevant_docs) if relevant_docs else 0.0
+                    results[k].setdefault('recall', []).append(recall)
+                
+                # MRR@k
+                if k in self.mrr_at_k:
+                    mrr = 0.0
+                    for rank, doc_id in enumerate(top_k, 1):
+                        if doc_id in relevant_docs:
+                            mrr = 1.0 / rank
+                            break
+                    results[k].setdefault('mrr', []).append(mrr)
+                
+                # NDCG@k (간단 버전)
+                if k in self.ndcg_at_k:
+                    dcg = 0.0
+                    for rank, doc_id in enumerate(top_k, 1):
+                        if doc_id in relevant_docs:
+                            dcg += 1.0 / np.log2(rank + 1)
+                    # Ideal DCG는 모든 relevant가 상위에 있을 때
+                    idcg = sum(1.0 / np.log2(i + 2) for i in range(min(len(relevant_docs), k)))
+                    ndcg = dcg / idcg if idcg > 0 else 0.0
+                    results[k].setdefault('ndcg', []).append(ndcg)
+                
+                # MAP@k (간단 버전)
+                if k in self.map_at_k:
+                    ap = 0.0
+                    relevant_found = 0
+                    for rank, doc_id in enumerate(top_k, 1):
+                        if doc_id in relevant_docs:
+                            relevant_found += 1
+                            ap += relevant_found / rank
+                    ap = ap / len(relevant_docs) if relevant_docs else 0.0
+                    results[k].setdefault('map', []).append(ap)
+        
+        # 평균 계산 및 결과 반환
+        final_results = {}
+        for k in all_k_values:
+            if k in self.accuracy_at_k and 'accuracy' in results[k]:
+                final_results[f"{self.name}_accuracy@{k}"] = np.mean(results[k]['accuracy'])
+            if k in self.precision_recall_at_k:
+                if 'precision' in results[k]:
+                    final_results[f"{self.name}_precision@{k}"] = np.mean(results[k]['precision'])
+                if 'recall' in results[k]:
+                    final_results[f"{self.name}_recall@{k}"] = np.mean(results[k]['recall'])
+            if k in self.mrr_at_k and 'mrr' in results[k]:
+                final_results[f"{self.name}_mrr@{k}"] = np.mean(results[k]['mrr'])
+            if k in self.ndcg_at_k and 'ndcg' in results[k]:
+                final_results[f"{self.name}_ndcg@{k}"] = np.mean(results[k]['ndcg'])
+            if k in self.map_at_k and 'map' in results[k]:
+                final_results[f"{self.name}_map@{k}"] = np.mean(results[k]['map'])
+        
+        return final_results
+
+
 def build_ir_evaluator(
     passages: Dict[str, Dict],
     eval_pairs_path: str,
@@ -33,12 +166,14 @@ def build_ir_evaluator(
     k_vals: Sequence[int] | int | None = None,
     template: TemplateMode = TemplateMode.BGE,
     batch_size: int = 32,  # 평가 시 배치 크기 (메모리 절약)
+    use_batched_queries: bool = True,  # 쿼리를 배치로 처리할지 여부 (기본값: True)
 ) -> Tuple[InformationRetrievalEvaluator, List[int]]:
     """
     IR 평가자를 생성한다. 템플릿 모드는 BGE 프롬프트 적용 여부를 제어한다.
     
     Args:
         batch_size: 평가 시 사용할 배치 크기 (기본값: 32, 메모리 절약을 위해 작게 설정)
+        use_batched_queries: 쿼리를 배치로 처리할지 여부 (기본값: True, 평가 속도 향상)
     """
     corpus = {pid: tp(row["text"], template) for pid, row in passages.items()}
 
@@ -51,19 +186,38 @@ def build_ir_evaluator(
 
     normalized_k = _normalize_k_values(k_vals, len(corpus))
 
-    evaluator = InformationRetrievalEvaluator(
-        queries=queries,
-        corpus=corpus,
-        relevant_docs=relevant_docs,
-        mrr_at_k=list(normalized_k),
-        ndcg_at_k=list(normalized_k),
-        map_at_k=list(normalized_k),
-        accuracy_at_k=list(normalized_k),  # Recall@k와 유사 (상위 k개 중 정답 포함 여부)
-        precision_recall_at_k=list(normalized_k),  # Precision@k, Recall@k 명시적으로 계산
-        show_progress_bar=False,
-        name="val",
-        batch_size=batch_size,  # 평가 배치 크기 설정
-    )
+    if use_batched_queries:
+        # 쿼리를 배치로 처리하는 커스텀 evaluator 사용 (평가 속도 향상)
+        evaluator = BatchedInformationRetrievalEvaluator(
+            queries=queries,
+            corpus=corpus,
+            relevant_docs=relevant_docs,
+            mrr_at_k=list(normalized_k),
+            ndcg_at_k=list(normalized_k),
+            map_at_k=list(normalized_k),
+            accuracy_at_k=list(normalized_k),
+            precision_recall_at_k=list(normalized_k),
+            show_progress_bar=False,
+            name="val",
+            batch_size=batch_size,  # corpus encoding 배치 크기
+            query_batch_size=batch_size,  # 쿼리 인코딩 배치 크기
+        )
+    else:
+        # 기본 InformationRetrievalEvaluator 사용 (쿼리를 하나씩 처리)
+        evaluator = InformationRetrievalEvaluator(
+            queries=queries,
+            corpus=corpus,
+            relevant_docs=relevant_docs,
+            mrr_at_k=list(normalized_k),
+            ndcg_at_k=list(normalized_k),
+            map_at_k=list(normalized_k),
+            accuracy_at_k=list(normalized_k),
+            precision_recall_at_k=list(normalized_k),
+            show_progress_bar=False,
+            name="val",
+            batch_size=batch_size,
+        )
+    
     return evaluator, normalized_k
 
 
