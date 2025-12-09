@@ -51,6 +51,22 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
             self._corpus_dict = corpus.copy()
         else:
             self._corpus_dict = None
+        
+        # primary_metric이 None인 경우 기본값 설정 (SequentialEvaluator 호환성)
+        # InformationRetrievalEvaluator는 보통 ndcg@k를 primary_metric으로 사용
+        if not hasattr(self, 'primary_metric') or self.primary_metric is None:
+            # ndcg_at_k가 있으면 가장 큰 k를 primary로 설정
+            if hasattr(self, 'ndcg_at_k') and self.ndcg_at_k:
+                max_k = max(self.ndcg_at_k)
+                self.primary_metric = f"ndcg@{max_k}"
+            # 없으면 mrr_at_k 사용
+            elif hasattr(self, 'mrr_at_k') and self.mrr_at_k:
+                max_k = max(self.mrr_at_k)
+                self.primary_metric = f"mrr@{max_k}"
+            # 그것도 없으면 accuracy_at_k 사용
+            elif hasattr(self, 'accuracy_at_k') and self.accuracy_at_k:
+                max_k = max(self.accuracy_at_k)
+                self.primary_metric = f"accuracy@{max_k}"
     
     def __call__(self, model, output_path: str = None, epoch: int = -1, steps: int = -1) -> Dict[str, float]:
         """쿼리를 배치로 처리하여 평가"""
@@ -194,8 +210,9 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
         # primary_metric이 있는 경우 해당 키도 추가 (SequentialEvaluator 호환성)
         # InformationRetrievalEvaluator는 보통 ndcg@k를 primary_metric으로 사용
         # SequentialEvaluator가 evaluator.primary_metric 키를 찾으므로 추가
-        if hasattr(self, 'primary_metric') and self.primary_metric:
-            primary_key = self.primary_metric
+        # primary_metric이 None이 아닌 경우에만 처리
+        primary_key = getattr(self, 'primary_metric', None)
+        if primary_key is not None:
             # primary_metric이 결과에 없으면 찾아서 추가
             if primary_key not in final_results:
                 # primary_metric 형식에 맞는 키 찾기
@@ -213,6 +230,20 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
                         if 'ndcg' in key.lower():
                             final_results[primary_key] = final_results[key]
                             break
+        else:
+            # primary_metric이 None인 경우, 기본적으로 가장 큰 k의 ndcg를 primary로 설정
+            # SequentialEvaluator가 primary_metric을 찾지 못하면 에러가 발생하므로
+            # 기본값을 설정해야 함
+            if self.ndcg_at_k:
+                max_k = max(self.ndcg_at_k)
+                primary_key = f"ndcg@{max_k}"
+                # 해당 키가 있으면 primary_metric으로 설정
+                for key in final_results.keys():
+                    if f"ndcg@{max_k}" in key or f"ndcg_at_{max_k}" in key:
+                        final_results[primary_key] = final_results[key]
+                        # primary_metric 속성도 설정 (다음 호출을 위해)
+                        self.primary_metric = primary_key
+                        break
         
         return final_results
 
