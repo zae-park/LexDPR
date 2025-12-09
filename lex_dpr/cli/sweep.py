@@ -1126,13 +1126,27 @@ def _run_agent_impl(
                 logger.error("  2. 설정 파일에 올바른 entity 추가")
                 logger.error("  3. sweep_id 형식 확인: entity/project/sweep_id 또는 project/sweep_id")
                 raise
+            
+            # wandb.agent()가 완료된 후 시간 체크
+            # wandb.agent()는 블로킹 호출이므로, 실행 중인 run이 끝날 때까지 기다림
+            # 따라서 time_window 체크는 run이 끝난 후에만 가능함
+            if time_window:
+                in_window, next_start_time = _check_time_window(time_window, timezone)
+                if not in_window:
+                    if next_start_time:
+                        import pytz
+                        tz = pytz.timezone(timezone)
+                        wait_seconds = (next_start_time - datetime.now(tz)).total_seconds()
+                        logger.info(f"현재 시간은 스윕 실행 시간 범위({time_window[0]}-{time_window[1]}시) 밖입니다.")
+                        logger.info(f"다음 시작 시간까지 대기합니다: {next_start_time.strftime('%Y-%m-%d %H:%M:%S')} ({int(wait_seconds // 60)}분 후)")
+                        time.sleep(wait_seconds + 5)  # 5초 여유
+                        continue  # 다시 시간 체크 후 계속
+            
             if count is not None:  # count가 지정된 경우, 한 번 실행 후 종료
                 break
-            # count가 None인 경우, 시간 제한이 있다면 다음 루프에서 다시 체크
-            if time_window:
-                time.sleep(60)  # 1분 대기 후 다시 시간 체크
-            else:  # 시간 제한이 없으면 무한 루프 방지
-                break  # count가 없으면 한 번만 실행하고 종료 (기존 동작 유지)
+            # count가 None인 경우, 시간 제한이 없으면 무한 루프 방지
+            if not time_window:
+                break  # count가 없고 시간 제한도 없으면 한 번만 실행하고 종료 (기존 동작 유지)
     except KeyboardInterrupt:
         logger.info("")
         logger.info("에이전트가 중단되었습니다.")

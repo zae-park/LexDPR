@@ -33,6 +33,7 @@ class EarlyStoppingCallback:
         min_delta: float = 0.0,
         mode: str = "max",
         restore_best_weights: bool = True,
+        warmup_steps: int = 0,
     ):
         """
         Args:
@@ -43,6 +44,7 @@ class EarlyStoppingCallback:
             min_delta: 개선으로 간주할 최소 변화량
             mode: "max" (값이 클수록 좋음) 또는 "min" (값이 작을수록 좋음)
             restore_best_weights: 조기 종료 시 최고 성능 가중치로 복원할지 여부
+            warmup_steps: Warmup 스텝 수 (warmup 기간 동안 early stopping을 더 관대하게 처리)
         """
         self.model = model
         self.out_dir = out_dir
@@ -51,6 +53,7 @@ class EarlyStoppingCallback:
         self.min_delta = min_delta
         self.mode = mode
         self.restore_best_weights = restore_best_weights
+        self.warmup_steps = warmup_steps
         
         self.best_score = float("-inf") if mode == "max" else float("inf")
         self.best_step = -1
@@ -63,6 +66,8 @@ class EarlyStoppingCallback:
         logger.info(f"  - Patience: {patience}")
         logger.info(f"  - Mode: {mode}")
         logger.info(f"  - 최소 변화량: {min_delta}")
+        if warmup_steps > 0:
+            logger.info(f"  - Warmup 스텝: {warmup_steps} (warmup 기간 동안 더 관대한 early stopping)")
     
     def __call__(self, metrics: Dict[str, float], step: int, epoch: int) -> bool:
         """
@@ -141,13 +146,31 @@ class EarlyStoppingCallback:
         else:
             # 개선 없음: patience 카운터 증가
             self.patience_counter += 1
+            
+            # Warmup 기간 중에는 더 관대한 early stopping 적용
+            # Warmup이 끝나고 cosine annealing에 접어들기 전까지는 learning rate가 높아서
+            # validation loss가 일시적으로 상승할 수 있으므로, 이 기간 동안은 patience를 늘림
+            effective_patience = self.patience
+            if self.warmup_steps > 0 and step <= self.warmup_steps * 2:
+                # Warmup 기간의 2배까지는 더 관대하게 처리 (cosine annealing 초반까지 고려)
+                effective_patience = int(self.patience * 1.5)
+                if self.patience_counter == 1:
+                    logger.info(
+                        f"Early Stopping: Warmup 기간 중이므로 더 관대한 patience 적용 "
+                        f"({self.patience_counter}/{effective_patience})"
+                    )
+            
             logger.info(
-                f"Early Stopping: 개선 없음 ({self.patience_counter}/{self.patience}) "
+                f"Early Stopping: 개선 없음 ({self.patience_counter}/{effective_patience}) "
                 f"(현재: {metric_value:.4f}, 최고: {self.best_score:.4f})"
             )
         
-        # Early stopping 조건 확인
-        if self.patience_counter >= self.patience:
+        # Early stopping 조건 확인 (warmup 기간 고려)
+        effective_patience = self.patience
+        if self.warmup_steps > 0 and step <= self.warmup_steps * 2:
+            effective_patience = int(self.patience * 1.5)
+        
+        if self.patience_counter >= effective_patience:
             self.should_stop = True
             logger.warning(
                 f"🛑 Early Stopping: {self.patience}번의 평가 동안 개선이 없어 학습을 종료합니다. "

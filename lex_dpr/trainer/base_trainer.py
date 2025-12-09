@@ -362,6 +362,8 @@ class BiEncoderTrainer:
                 mode = getattr(early_stopping_config, "mode", "max")
                 restore_best = getattr(early_stopping_config, "restore_best_weights", True)
                 
+                # Warmup 스텝 수를 early stopping에 전달하여 warmup 기간 동안 더 관대하게 처리
+                warmup_steps = getattr(self.artifacts, "warmup_steps", 0)
                 early_stopping = EarlyStoppingCallback(
                     model=self.model,
                     out_dir=self.cfg.out_dir,
@@ -370,6 +372,7 @@ class BiEncoderTrainer:
                     min_delta=min_delta,
                     mode=mode,
                     restore_best_weights=restore_best,
+                    warmup_steps=warmup_steps,
                 )
                 logger.info("Early Stopping 활성화됨")
             
@@ -396,8 +399,10 @@ class BiEncoderTrainer:
             logger.info(f"🧪 테스트 실행 모드: epochs를 1로 제한 (원래 설정: {self.cfg.trainer.epochs})")
         
         total_steps = steps_per_epoch * effective_epochs
-        # Warmup ratio 설정 (기본값: 0.1 = 10%)
-        warmup_ratio = float(getattr(self.cfg.trainer, "warmup_ratio", 0.1))
+        # Warmup ratio 설정 (기본값: 0.05 = 5%)
+        # Warmup ratio를 낮춰서 learning rate가 너무 빨리 상승하는 것을 방지
+        # Cosine annealing에 더 빨리 접어들도록 하여 학습 안정성 향상
+        warmup_ratio = float(getattr(self.cfg.trainer, "warmup_ratio", 0.05))
         warmup_steps = max(10, int(total_steps * warmup_ratio))
 
         return TrainerArtifacts(
