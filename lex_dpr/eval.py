@@ -174,6 +174,7 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
                     results[k].setdefault('map', []).append(ap)
         
         # 평균 계산 및 결과 반환
+        # InformationRetrievalEvaluator의 메트릭 키 형식에 맞춤
         final_results = {}
         for k in all_k_values:
             if k in self.accuracy_at_k and 'accuracy' in results[k]:
@@ -189,6 +190,29 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
                 final_results[f"{self.name}_ndcg@{k}"] = np.mean(results[k]['ndcg'])
             if k in self.map_at_k and 'map' in results[k]:
                 final_results[f"{self.name}_map@{k}"] = np.mean(results[k]['map'])
+        
+        # primary_metric이 있는 경우 해당 키도 추가 (SequentialEvaluator 호환성)
+        # InformationRetrievalEvaluator는 보통 ndcg@k를 primary_metric으로 사용
+        # SequentialEvaluator가 evaluator.primary_metric 키를 찾으므로 추가
+        if hasattr(self, 'primary_metric') and self.primary_metric:
+            primary_key = self.primary_metric
+            # primary_metric이 결과에 없으면 찾아서 추가
+            if primary_key not in final_results:
+                # primary_metric 형식에 맞는 키 찾기
+                # 예: "ndcg@10" -> "val_ndcg@10" 또는 "val_cosine_ndcg@10"
+                found = False
+                for key in final_results.keys():
+                    # primary_metric이 "ndcg@10" 형식이면 "val_ndcg@10" 또는 "val_cosine_ndcg@10" 찾기
+                    if primary_key.replace('@', '_at_') in key or primary_key.replace('@', '@') in key:
+                        final_results[primary_key] = final_results[key]
+                        found = True
+                        break
+                # 찾지 못한 경우 첫 번째 ndcg 메트릭 사용
+                if not found:
+                    for key in final_results.keys():
+                        if 'ndcg' in key.lower():
+                            final_results[primary_key] = final_results[key]
+                            break
         
         return final_results
 
