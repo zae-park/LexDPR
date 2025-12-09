@@ -107,18 +107,32 @@ class BatchedInformationRetrievalEvaluator(InformationRetrievalEvaluator):
             query_ids = list(range(len(self.queries)))
             query_texts = list(self.queries)
         
-        # 배치로 쿼리 인코딩
+        # 배치로 쿼리 인코딩 (프로그레스 바 비활성화)
         query_embeddings_list = []
-        for i in range(0, len(query_texts), self.query_batch_size):
-            batch_texts = query_texts[i:i + self.query_batch_size]
-            batch_embeddings = model.encode(
-                batch_texts,
-                batch_size=self.query_batch_size,
-                show_progress_bar=False,
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-            )
-            query_embeddings_list.append(torch.from_numpy(batch_embeddings).float())
+        # tqdm 출력 억제를 위해 임시로 환경 변수 설정
+        import os
+        from tqdm import tqdm
+        import sys
+        from io import StringIO
+        
+        # tqdm 출력을 임시로 억제
+        old_stdout = sys.stdout
+        sys.stdout = StringIO()
+        
+        try:
+            for i in range(0, len(query_texts), self.query_batch_size):
+                batch_texts = query_texts[i:i + self.query_batch_size]
+                batch_embeddings = model.encode(
+                    batch_texts,
+                    batch_size=len(batch_texts),  # 배치 크기를 실제 텍스트 수로 설정하여 단일 배치로 처리
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                )
+                query_embeddings_list.append(torch.from_numpy(batch_embeddings).float())
+        finally:
+            # stdout 복원
+            sys.stdout = old_stdout
         
         query_embeddings = torch.cat(query_embeddings_list, dim=0)
         
