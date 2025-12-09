@@ -290,37 +290,21 @@ def build_ir_evaluator(
 
     normalized_k = _normalize_k_values(k_vals, len(corpus))
 
-    if use_batched_queries:
-        # 쿼리를 배치로 처리하는 커스텀 evaluator 사용 (평가 속도 향상)
-        evaluator = BatchedInformationRetrievalEvaluator(
-            queries=queries,
-            corpus=corpus,
-            relevant_docs=relevant_docs,
-            mrr_at_k=list(normalized_k),
-            ndcg_at_k=list(normalized_k),
-            map_at_k=list(normalized_k),
-            accuracy_at_k=list(normalized_k),
-            precision_recall_at_k=list(normalized_k),
-            show_progress_bar=False,
-            name="val",
-            batch_size=batch_size,  # corpus encoding 배치 크기
-            query_batch_size=batch_size,  # 쿼리 인코딩 배치 크기
-        )
-    else:
-        # 기본 InformationRetrievalEvaluator 사용 (쿼리를 하나씩 처리)
-        evaluator = InformationRetrievalEvaluator(
-            queries=queries,
-            corpus=corpus,
-            relevant_docs=relevant_docs,
-            mrr_at_k=list(normalized_k),
-            ndcg_at_k=list(normalized_k),
-            map_at_k=list(normalized_k),
-            accuracy_at_k=list(normalized_k),
-            precision_recall_at_k=list(normalized_k),
-            show_progress_bar=False,
-            name="val",
-            batch_size=batch_size,
-        )
+    # 기본 InformationRetrievalEvaluator 사용 (BatchedInformationRetrievalEvaluator는 버그가 있어서 임시로 비활성화)
+    # TODO: BatchedInformationRetrievalEvaluator의 메트릭 계산 로직 수정 필요
+    evaluator = InformationRetrievalEvaluator(
+        queries=queries,
+        corpus=corpus,
+        relevant_docs=relevant_docs,
+        mrr_at_k=list(normalized_k),
+        ndcg_at_k=list(normalized_k),
+        map_at_k=list(normalized_k),
+        accuracy_at_k=list(normalized_k),
+        precision_recall_at_k=list(normalized_k),
+        show_progress_bar=False,
+        name="val",
+        batch_size=batch_size,
+    )
     
     return evaluator, normalized_k
 
