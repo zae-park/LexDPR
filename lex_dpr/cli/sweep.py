@@ -944,6 +944,22 @@ def _run_agent_impl(
     # WandB 에이전트 실행 함수 정의
     def train_fn():
         """WandB 에이전트가 호출하는 학습 함수"""
+        # 각 run 시작 전에 GPU 메모리 정리 (이전 run의 잔여 메모리 제거)
+        try:
+            import torch
+            import gc
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                # 모든 GPU 디바이스에서 메모리 정리
+                for i in range(torch.cuda.device_count()):
+                    with torch.cuda.device(i):
+                        torch.cuda.empty_cache()
+                gc.collect()
+                logger.debug("Run 시작 전 GPU 메모리 정리 완료")
+        except Exception as e:
+            logger.debug(f"메모리 정리 중 오류 (무시됨): {e}")
+        
         # wandb.agent()가 자동으로 wandb.init()을 호출하고 wandb.config를 설정함
         # 하지만 명시적으로 확인하고 로깅
         try:
@@ -1027,10 +1043,16 @@ def _run_agent_impl(
                 if wandb.run:
                     try:
                         # 태그 추가 (WandB 대시보드에서 필터링 가능)
+                        # wandb.run.tags는 tuple일 수 있으므로 리스트로 변환
                         if not hasattr(wandb.run, 'tags') or wandb.run.tags is None:
                             wandb.run.tags = []
-                        wandb.run.tags.append("OOM")
-                        wandb.run.tags.append("failed")
+                        elif isinstance(wandb.run.tags, tuple):
+                            wandb.run.tags = list(wandb.run.tags)
+                        
+                        if "OOM" not in wandb.run.tags:
+                            wandb.run.tags.append("OOM")
+                        if "failed" not in wandb.run.tags:
+                            wandb.run.tags.append("failed")
                         
                         # Summary에 실패 정보 추가
                         wandb.run.summary["status"] = "failed"
