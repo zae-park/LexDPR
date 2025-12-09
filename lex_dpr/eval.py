@@ -32,9 +32,13 @@ def build_ir_evaluator(
     *,
     k_vals: Sequence[int] | int | None = None,
     template: TemplateMode = TemplateMode.BGE,
+    batch_size: int = 32,  # 평가 시 배치 크기 (메모리 절약)
 ) -> Tuple[InformationRetrievalEvaluator, List[int]]:
     """
     IR 평가자를 생성한다. 템플릿 모드는 BGE 프롬프트 적용 여부를 제어한다.
+    
+    Args:
+        batch_size: 평가 시 사용할 배치 크기 (기본값: 32, 메모리 절약을 위해 작게 설정)
     """
     corpus = {pid: tp(row["text"], template) for pid, row in passages.items()}
 
@@ -58,6 +62,7 @@ def build_ir_evaluator(
         precision_recall_at_k=list(normalized_k),  # Precision@k, Recall@k 명시적으로 계산
         show_progress_bar=False,
         name="val",
+        batch_size=batch_size,  # 평가 배치 크기 설정
     )
     return evaluator, normalized_k
 

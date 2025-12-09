@@ -451,7 +451,7 @@ parameters:
   trainer.lr:
     distribution: log_uniform_values  # log_uniform_values, uniform, categorical
     min: 0.000001  # 1e-6
-    max: 0.001     # 1e-3
+    max: 0.0001     # 1e-4
   
   trainer.temperature:
     distribution: uniform
@@ -459,7 +459,7 @@ parameters:
     max: 0.2
   
   trainer.gradient_accumulation_steps:
-    values: [4, 8, 16]  # categorical (고정 값들 중 선택)
+    values: [4, 8, 16, 32]  # categorical (고정 값들 중 선택)
   
   # trainer.epochs:
   #   value: 3  # 고정 값 (스윕에서 변경하지 않음)
@@ -499,8 +499,8 @@ metric:
 # epochs=50, eval_steps=300이면 대략 50번의 평가가 가능하므로 max_iter를 충분히 크게 설정
 early_terminate:
   type: hyperband
-  min_iter: 5  # 최소 5번 평가 후 종료 판단 (너무 일찍 종료 방지)
-  max_iter: 50  # 최대 50번 평가 후 종료 (epochs=50에 맞춤)
+  min_iter: 10  # 최소 5번 평가 후 종료 판단 (너무 일찍 종료 방지)
+  max_iter: 5000  # 최대 50번 평가 후 종료 (epochs=50에 맞춤)
   s: 2  # Successive halving factor
 
 # 탐색할 하이퍼파라미터 (넉넉한 범위)
@@ -527,7 +527,7 @@ parameters:
   trainer.warmup_ratio:
     distribution: uniform
     min: 0.0
-    max: 0.3
+    max: 0.2
   
   # Gradient accumulation steps (넉넉한 범위)
   trainer.gradient_accumulation_steps:
@@ -557,7 +557,7 @@ parameters:
   # 작은 배치 크기(16-64)로도 contrastive learning에서 충분히 효과적입니다.
   # 배치 내 negative sampling 덕분에 작은 배치로도 학습이 가능합니다.
   data.batches.bi:
-    values: [16, 32, 64]  # 128, 256 제거 (OOM 방지)
+    values: [16, 32, 64, 128]  # 256 제거 (OOM 방지)
   
   # 데이터 증폭 (integer, categorical 유지)
   data.multiply:
@@ -570,7 +570,7 @@ parameters:
   # 시퀀스 길이 (메모리 효율적인 범위로 제한)
   # 768은 메모리 사용량이 매우 크므로 제거
   model.max_len:
-    values: [128, 256, 384]  # 512, 768 제거 (OOM 방지)
+    values: [128, 256, 384, 512]  # 768 제거 (OOM 방지)
 
 # 고정 파라미터 (모든 스윕 실행에서 동일하게 사용)
 fixed:
@@ -583,7 +583,7 @@ fixed:
   # Early Stopping 설정 (학습 효율성)
   trainer.early_stopping.enabled: true
   trainer.early_stopping.metric: "cosine_ndcg@10"
-  trainer.early_stopping.patience: 10
+  trainer.early_stopping.patience: 30
   trainer.early_stopping.min_delta: 0.001
   trainer.early_stopping.mode: "max"
   trainer.early_stopping.restore_best_weights: true
@@ -1061,14 +1061,30 @@ def _run_agent_impl(
                 raise
         finally:
             sys.argv = original_argv
-            # 각 run 사이에 메모리 정리
+            # 각 run 사이에 메모리 정리 (time_window 내에서만)
+            # time_window 밖에서는 다른 프로세스(VLLM 등)가 GPU를 사용 중일 수 있으므로 정리하지 않음
             try:
+                if time_window:
+                    in_window, _ = _check_time_window(time_window, timezone)
+                    if not in_window:
+                        logger.debug("Time window 밖이므로 GPU 메모리 정리 건너뜀")
+                        return
+                
+                # time_window 내에서만 메모리 정리
                 import torch
                 import gc
                 if torch.cuda.is_available():
+                    # 모든 GPU에서 메모리 정리
                     torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    # 추가 정리: 모든 GPU 디바이스 확인
+                    for i in range(torch.cuda.device_count()):
+                        with torch.cuda.device(i):
+                            torch.cuda.empty_cache()
                 gc.collect()
-            except Exception:
+                logger.debug("Run 종료 후 GPU 메모리 정리 완료 (time_window 내)")
+            except Exception as e:
+                logger.debug(f"메모리 정리 중 오류 (무시됨): {e}")
                 pass
     
     # WandB 에이전트 실행
@@ -1077,6 +1093,7 @@ def _run_agent_impl(
             if time_window:
                 in_window, next_start_time = _check_time_window(time_window, timezone)
                 if not in_window:
+                    # time_window 밖에서는 GPU 메모리 정리하지 않음 (다른 프로세스가 사용 중일 수 있음)
                     if next_start_time:
                         import pytz
                         tz = pytz.timezone(timezone)
@@ -1135,6 +1152,22 @@ def _run_agent_impl(
             if time_window:
                 in_window, next_start_time = _check_time_window(time_window, timezone)
                 if not in_window:
+                    # run이 끝난 후 time_window 밖이면 GPU 메모리 정리 후 대기
+                    try:
+                        import torch
+                        import gc
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                            # 모든 GPU 디바이스에서 메모리 정리
+                            for i in range(torch.cuda.device_count()):
+                                with torch.cuda.device(i):
+                                    torch.cuda.empty_cache()
+                            logger.debug("Run 종료 후 time window 밖에서 GPU 메모리 정리 완료")
+                        gc.collect()
+                    except Exception:
+                        pass
+                    
                     if next_start_time:
                         import pytz
                         tz = pytz.timezone(timezone)

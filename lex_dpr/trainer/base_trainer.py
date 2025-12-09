@@ -328,13 +328,15 @@ class BiEncoderTrainer:
         early_stopping = None
         
         if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
-            # IR evaluator 생성
+            # IR evaluator 생성 (평가 배치 크기 설정: 메모리 절약)
+            eval_batch_size = min(32, self.batch_size)  # 평가는 작은 배치로
             base_evaluator, _ = build_ir_evaluator(
                 passages=self.passages,
                 eval_pairs_path=self.cfg.trainer.eval_pairs,
                 read_jsonl_fn=read_jsonl,
                 k_vals=self.cfg.trainer.k_values,
                 template=self.template_mode,
+                batch_size=eval_batch_size,
             )
             
             # Validation loss evaluator 추가
@@ -540,6 +542,15 @@ class BiEncoderTrainer:
             if hasattr(self.cfg.trainer, "eps"):
                 optimizer_params["eps"] = float(self.cfg.trainer.eps)
             
+            # 평가 전 메모리 정리 (OOM 방지)
+            if self.artifacts.evaluator:
+                import torch
+                import gc
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                gc.collect()
+            
             self.model.fit(
                 train_objectives=[(self.artifacts.loader, self.artifacts.loss)],
                 epochs=effective_epochs,
@@ -555,6 +566,31 @@ class BiEncoderTrainer:
         except EarlyStoppingException as e:
             logger.info(f"Early Stopping으로 인해 학습이 조기 종료되었습니다: {e}")
             # Early stopping이 발생했지만 정상적인 종료로 처리
+        except Exception as e:
+            # 예외 발생 시 메모리 정리
+            import torch
+            import gc
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                gc.collect()
+                logger.warning("예외 발생 후 GPU 메모리 정리 완료")
+            except Exception:
+                pass
+            raise  # 예외 재발생
+        finally:
+            # 학습 종료 후 항상 메모리 정리 (다음 run을 위해)
+            import torch
+            import gc
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                gc.collect()
+                logger.debug("학습 종료 후 GPU 메모리 정리 완료")
+            except Exception:
+                pass
 
         logger.info("")
         
