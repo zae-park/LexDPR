@@ -983,23 +983,23 @@ def _run_agent_impl(
         # train.py의 main()을 호출하여 WandB Sweep 모드로 실행
         original_argv = sys.argv.copy()
         try:
-            import torch  # torch를 먼저 import하여 except 절에서 사용 가능하도록 함
             sys.argv = ["train"]
             from lex_dpr.cli import train as train_module
             train_module.main()
         except RuntimeError as e:
             # CUDA OOM 에러 처리 (RuntimeError와 torch.cuda.OutOfMemoryError 모두 처리)
+            import torch  # except 절 내에서 import
             error_msg = str(e).lower()
             # torch.cuda.OutOfMemoryError는 RuntimeError의 서브클래스이므로 isinstance로 확인
             is_oom = (
                 "out of memory" in error_msg or 
                 "cuda" in error_msg or 
-                (hasattr(torch.cuda, 'OutOfMemoryError') and isinstance(e, torch.cuda.OutOfMemoryError))
+                (torch is not None and hasattr(torch.cuda, 'OutOfMemoryError') and isinstance(e, torch.cuda.OutOfMemoryError))
             )
             
             if is_oom:
                 import wandb
-                import torch
+                # torch는 이미 위에서 import됨
                 
                 logger.error("=" * 80)
                 logger.error("❌ CUDA Out of Memory (OOM) 발생!")
@@ -1009,7 +1009,7 @@ def _run_agent_impl(
                 
                 # CUDA 메모리 정리 시도
                 try:
-                    if torch.cuda.is_available():
+                    if torch is not None and torch.cuda.is_available():
                         torch.cuda.empty_cache()
                         torch.cuda.synchronize()
                         logger.info("CUDA 캐시 정리 완료")
@@ -1071,18 +1071,21 @@ def _run_agent_impl(
                         return
                 
                 # time_window 내에서만 메모리 정리
-                import torch
-                import gc
-                if torch.cuda.is_available():
-                    # 모든 GPU에서 메모리 정리
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                    # 추가 정리: 모든 GPU 디바이스 확인
-                    for i in range(torch.cuda.device_count()):
-                        with torch.cuda.device(i):
-                            torch.cuda.empty_cache()
-                gc.collect()
-                logger.debug("Run 종료 후 GPU 메모리 정리 완료 (time_window 내)")
+                try:
+                    import torch
+                    import gc
+                    if torch is not None and torch.cuda.is_available():
+                        # 모든 GPU에서 메모리 정리
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                        # 추가 정리: 모든 GPU 디바이스 확인
+                        for i in range(torch.cuda.device_count()):
+                            with torch.cuda.device(i):
+                                torch.cuda.empty_cache()
+                    gc.collect()
+                    logger.debug("Run 종료 후 GPU 메모리 정리 완료 (time_window 내)")
+                except ImportError:
+                    pass  # torch가 설치되지 않은 경우 무시
             except Exception as e:
                 logger.debug(f"메모리 정리 중 오류 (무시됨): {e}")
                 pass
@@ -1122,10 +1125,14 @@ def _run_agent_impl(
             logger.info("")
             
             # CUDA 메모리 할당 최적화 환경 변수 설정
-            if torch and torch.cuda.is_available():
-                if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
-                    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-                    logger.info("CUDA 메모리 할당 최적화 활성화: expandable_segments:True")
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+                        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                        logger.info("CUDA 메모리 할당 최적화 활성화: expandable_segments:True")
+            except ImportError:
+                pass  # torch가 설치되지 않은 경우 무시
             
             # wandb.agent() 호출
             # sweep_id 형식: entity/project/sweep_id 또는 project/sweep_id
