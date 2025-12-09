@@ -97,6 +97,16 @@ class EarlyStoppingCallback:
             f"val_{self.metric_key.replace('@', '_at_')}",  # "val_cosine_ndcg_at_10"
         ]
         
+        # "cosine_ndcg@10" -> "val_ndcg@10" 형식도 검색 (BatchedInformationRetrievalEvaluator가 반환하는 형식)
+        if "cosine_" in self.metric_key:
+            # "cosine_ndcg@10" -> "ndcg@10" -> "val_ndcg@10"
+            metric_without_cosine = self.metric_key.replace("cosine_", "")
+            search_keys.extend([
+                f"val_{metric_without_cosine}",  # "val_ndcg@10"
+                metric_without_cosine.replace("@", "_at_"),  # "ndcg_at_10"
+                f"val_{metric_without_cosine.replace('@', '_at_')}",  # "val_ndcg_at_10"
+            ])
+        
         # validation loss 관련 키는 제외
         excluded_patterns = ["val_loss", "loss", "val_cosine_loss"]
         
