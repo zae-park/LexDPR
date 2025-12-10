@@ -14,6 +14,8 @@ MRR@k, NDCG@k, MAP@k, Precision/Recall@k 등을 계산한다.
 
 import argparse
 import json
+import logging
+import os
 import statistics
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -29,6 +31,9 @@ from lex_dpr.eval_detailed import (
 )
 from lex_dpr.models.templates import TemplateMode
 from lex_dpr.utils.io import read_jsonl
+from lex_dpr.utils.web_logging import WebLogger
+
+logger = logging.getLogger("lex_dpr.cli.eval")
 
 
 def _parse_k_values(values: Sequence[str] | None) -> List[int]:
@@ -41,6 +46,91 @@ def _parse_k_values(values: Sequence[str] | None) -> List[int]:
         except ValueError:
             continue
     return parsed or [1, 3, 5, 10]
+
+
+def _normalize_metric_name(key: str) -> str:
+    """메트릭 이름을 WandB 형식으로 정규화"""
+    # "val_cosine_ndcg@10" -> "ndcg_at_10"
+    metric_name = key
+    # "val_" 제거
+    if metric_name.startswith("val_"):
+        metric_name = metric_name[4:]
+    # "cosine_" 제거
+    if metric_name.startswith("cosine_"):
+        metric_name = metric_name[7:]
+    # "@" 기호를 "_at_"로 변경 (WandB는 @ 기호를 허용하지 않음)
+    metric_name = metric_name.replace("@", "_at_")
+    return metric_name
+
+
+def _log_metrics_to_wandb(metrics: dict, model_name: str, web_logger: WebLogger, k_values: List[int]):
+    """메트릭을 WandB에 로깅"""
+    if not web_logger or not web_logger.is_active:
+        return
+    
+    # 메트릭 이름 정규화 및 로깅
+    wandb_metrics = {}
+    for key, value in metrics.items():
+        if isinstance(value, (int, float)):
+            normalized_key = _normalize_metric_name(key)
+            wandb_metrics[normalized_key] = float(value)
+    
+    # 모델 이름을 태그로 추가
+    try:
+        import wandb
+        if hasattr(wandb.run, 'tags'):
+            tags = list(wandb.run.tags) if wandb.run.tags else []
+            if model_name not in tags:
+                tags.append(model_name)
+            wandb.run.tags = tags
+    except Exception:
+        pass
+    
+    if wandb_metrics:
+        web_logger.log_metrics(wandb_metrics, step=0)
+        logger.info(f"WandB에 메트릭 로깅 완료: {len(wandb_metrics)}개 메트릭")
+
+
+def _create_report_file(metrics: dict, model_name: str, k_values: List[int], output_path: Path):
+    """평가 결과 리포트 파일 생성"""
+    report_lines = []
+    report_lines.append("=" * 80)
+    report_lines.append(f"LexDPR 평가 리포트: {model_name}")
+    report_lines.append("=" * 80)
+    report_lines.append("")
+    
+    # 메트릭 그룹화
+    metric_groups = {
+        "MRR": [],
+        "NDCG": [],
+        "MAP": [],
+        "Precision": [],
+        "Recall": [],
+        "Accuracy": [],
+    }
+    
+    for key, value in sorted(metrics.items()):
+        if isinstance(value, (int, float)):
+            for group_name in metric_groups.keys():
+                if group_name.lower() in key.lower():
+                    metric_groups[group_name].append((key, value))
+                    break
+    
+    # 각 그룹별 출력
+    for group_name, group_metrics in metric_groups.items():
+        if group_metrics:
+            report_lines.append(f"\n{group_name} 메트릭:")
+            report_lines.append("-" * 80)
+            for key, value in sorted(group_metrics):
+                normalized_key = _normalize_metric_name(key)
+                report_lines.append(f"  {normalized_key:30s}: {value:.4f}")
+    
+    report_lines.append("\n" + "=" * 80)
+    
+    # 파일 저장
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(report_lines), encoding="utf-8")
+    logger.info(f"평가 리포트 저장: {output_path}")
 
 
 def main() -> None:
@@ -105,6 +195,29 @@ def main() -> None:
         default="",
         help="모델 비교 리포트 저장 경로 (--compare-models와 함께 사용)",
     )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="결과를 WandB에 로깅",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="lexdpr-eval",
+        help="WandB 프로젝트 이름 (기본: lexdpr-eval)",
+    )
+    parser.add_argument(
+        "--wandb-name",
+        type=str,
+        default="",
+        help="WandB run 이름 (기본: 모델 이름 또는 'eval')",
+    )
+    parser.add_argument(
+        "--wandb-entity",
+        type=str,
+        default="",
+        help="WandB entity 이름 (선택사항)",
+    )
 
     args = parser.parse_args()
 
@@ -118,6 +231,24 @@ def main() -> None:
 
     # 1) Passage 로드
     passages = load_passages(str(passages_path))
+    
+    # WandB 로거 초기화 (옵션이 활성화된 경우)
+    web_logger = None
+    if args.wandb:
+        wandb_token = os.getenv("WANDB_API_KEY")
+        if not wandb_token:
+            logger.warning("WANDB_API_KEY 환경 변수가 설정되지 않았습니다. WandB 로깅을 건너뜁니다.")
+        else:
+            try:
+                web_logger = WebLogger(
+                    service="wandb",
+                    token=wandb_token,
+                    project=args.wandb_project,
+                    name=args.wandb_name or "eval",
+                    entity=args.wandb_entity if args.wandb_entity else None,
+                )
+            except Exception as e:
+                logger.warning(f"WandB 초기화 실패: {e}. WandB 로깅을 건너뜁니다.")
 
     # 2) 여러 모델 비교 모드
     if args.compare_models:
@@ -133,6 +264,21 @@ def main() -> None:
             output_file=args.compare_output or None,
         )
         
+        # WandB에 각 모델 결과 로깅
+        if web_logger and web_logger.is_active:
+            for model_path, model_metrics in compare_result.items():
+                model_name = Path(model_path).name if model_path else "unknown"
+                # WandB run 이름 업데이트
+                try:
+                    import wandb
+                    if args.wandb_name:
+                        wandb.run.name = f"{args.wandb_name}-{model_name}"
+                    else:
+                        wandb.run.name = f"eval-{model_name}"
+                except Exception:
+                    pass
+                _log_metrics_to_wandb(model_metrics, model_name, web_logger, k_vals)
+        
         if args.output:
             out_path = Path(args.output)
             out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,6 +286,9 @@ def main() -> None:
                 json.dumps(compare_result, ensure_ascii=False, indent=2),
                 encoding="utf-8"
             )
+        
+        if web_logger:
+            web_logger.finish()
         return
 
     # 3) 상세 분석 모드
@@ -156,12 +305,34 @@ def main() -> None:
             template=template_mode,
         )
         
+        # 모델 이름 추출
+        model_name = Path(args.model).name if args.model else "unknown"
+        
+        # WandB 로깅
+        if web_logger and web_logger.is_active:
+            try:
+                import wandb
+                if args.wandb_name:
+                    wandb.run.name = args.wandb_name
+                else:
+                    wandb.run.name = f"eval-detailed-{model_name}"
+                # 모델 경로를 파라미터로 로깅
+                web_logger.log_params({"model": args.model, "template": args.template})
+            except Exception:
+                pass
+            _log_metrics_to_wandb(detailed_result.metrics, model_name, web_logger, k_vals)
+        
         # 리포트 출력
+        report_path = args.report or None
         print_detailed_report(
             result=detailed_result,
-            output_file=args.report or None,
+            output_file=report_path,
             k_values=k_vals,
         )
+        
+        # 리포트를 WandB 아티팩트로 업로드
+        if report_path and web_logger and web_logger.is_active:
+            web_logger.log_artifact(str(report_path), artifact_path="detailed_eval_report.txt")
         
         # JSON 출력
         if args.output:
@@ -187,6 +358,9 @@ def main() -> None:
                 json.dumps(result_dict, ensure_ascii=False, indent=2),
                 encoding="utf-8"
             )
+        
+        if web_logger:
+            web_logger.finish()
         return
 
     # 4) 기본 평가 모드 (기존 동작)
@@ -208,12 +382,42 @@ def main() -> None:
         "metrics": metrics,
     }
 
+    # 모델 이름 추출
+    model_name = Path(args.model).name if args.model else "unknown"
+    
+    # WandB 로깅
+    if web_logger and web_logger.is_active:
+        # WandB run 이름 설정
+        try:
+            import wandb
+            if args.wandb_name:
+                wandb.run.name = args.wandb_name
+            else:
+                wandb.run.name = f"eval-{model_name}"
+            # 모델 경로를 파라미터로 로깅
+            web_logger.log_params({"model": args.model, "template": args.template})
+        except Exception:
+            pass
+        _log_metrics_to_wandb(metrics, model_name, web_logger, normalized_k)
+    
+    # 리포트 생성
+    if args.report:
+        report_path = Path(args.report)
+        _create_report_file(metrics, model_name, normalized_k, report_path)
+        # 리포트를 WandB 아티팩트로 업로드
+        if web_logger and web_logger.is_active:
+            web_logger.log_artifact(str(report_path), artifact_path="eval_report.txt")
+
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    
+    # WandB 종료
+    if web_logger:
+        web_logger.finish()
 
 
 if __name__ == "__main__":
