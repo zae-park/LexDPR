@@ -168,6 +168,12 @@ def main() -> None:
         help="템플릿 모드: 'bge' 또는 'none' (기본: bge)",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help="평가 시 배치 크기 (기본: 16, 메모리 절약을 위해 작게 설정)",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="",
@@ -255,14 +261,49 @@ def main() -> None:
         k_vals = _parse_k_values(args.k_values)
         template_mode = TemplateMode.BGE if args.template == "bge" else TemplateMode.NONE
         
-        compare_result = compare_models(
+        # compare_models 함수가 batch_size를 지원하는지 확인 필요
+        # 일단 기본 InformationRetrievalEvaluator를 사용하도록 수정
+        # compare_models 함수 사용 (더 효율적)
+        from lex_dpr.eval_detailed import compare_models
+        compare_result_dict = compare_models(
             model_paths=args.compare_models,
             passages=passages,
             eval_pairs_path=str(eval_pairs_path),
             k_values=k_vals,
             template=template_mode,
             output_file=args.compare_output or None,
+            batch_size=args.batch_size,
         )
+        
+        # compare_models는 딕셔너리를 반환하므로 결과 추출
+        comparison_results = compare_result_dict.get("comparison_results", [])
+        compare_result = {}
+        for item in comparison_results:
+            model_path = item.get("model_path", "")
+            compare_result[model_path] = item.get("metrics", {})
+        
+        # 비교 리포트 생성
+        if args.compare_output:
+            compare_output_path = Path(args.compare_output)
+            compare_output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            report_lines = []
+            report_lines.append("=" * 80)
+            report_lines.append("모델 비교 평가 리포트")
+            report_lines.append("=" * 80)
+            report_lines.append("")
+            
+            for model_path, metrics in compare_result.items():
+                model_name = Path(model_path).name if model_path else "unknown"
+                report_lines.append(f"\n모델: {model_name}")
+                report_lines.append("-" * 80)
+                for key, value in sorted(metrics.items()):
+                    if isinstance(value, (int, float)):
+                        normalized_key = _normalize_metric_name(key)
+                        report_lines.append(f"  {normalized_key:30s}: {value:.4f}")
+            
+            compare_output_path.write_text("\n".join(report_lines), encoding="utf-8")
+            logger.info(f"비교 리포트 저장: {compare_output_path}")
         
         # WandB에 각 모델 결과 로깅
         if web_logger and web_logger.is_active:
@@ -296,14 +337,30 @@ def main() -> None:
         k_vals = _parse_k_values(args.k_values)
         template_mode = TemplateMode.BGE if args.template == "bge" else TemplateMode.NONE
         
+        # GPU 메모리 정리
+        import torch
+        import gc
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        
         model = SentenceTransformer(args.model)
-        detailed_result = evaluate_detailed(
-            model=model,
-            passages=passages,
-            eval_pairs_path=str(eval_pairs_path),
-            k_values=k_vals,
-            template=template_mode,
-        )
+        
+        try:
+            detailed_result = evaluate_detailed(
+                model=model,
+                passages=passages,
+                eval_pairs_path=str(eval_pairs_path),
+                k_values=k_vals,
+                template=template_mode,
+                batch_size=args.batch_size,
+            )
+        finally:
+            # 메모리 정리
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
         
         # 모델 이름 추출
         model_name = Path(args.model).name if args.model else "unknown"
@@ -366,16 +423,32 @@ def main() -> None:
     # 4) 기본 평가 모드 (기존 동작)
     k_vals = _parse_k_values(args.k_values)
     template_mode = TemplateMode.BGE if args.template == "bge" else TemplateMode.NONE
+    
+    # GPU 메모리 정리
+    import torch
+    import gc
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+    
     evaluator, normalized_k = build_ir_evaluator(
         passages=passages,
         eval_pairs_path=str(eval_pairs_path),
         read_jsonl_fn=read_jsonl,
         k_vals=k_vals,
         template=template_mode,
+        batch_size=args.batch_size,
     )
 
     model = SentenceTransformer(args.model)
-    metrics = evaluator(model, output_path=None)
+    try:
+        metrics = evaluator(model, output_path=None)
+    finally:
+        # 메모리 정리
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
     result = {
         "k_values": normalized_k,

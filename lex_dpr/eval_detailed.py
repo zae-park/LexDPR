@@ -388,6 +388,7 @@ def compare_models(
     k_values: List[int] = [1, 3, 5, 10],
     template: TemplateMode = TemplateMode.BGE,
     output_file: Optional[str] = None,
+    batch_size: int = 16,
 ) -> Dict:
     """
     여러 모델의 성능을 비교
@@ -408,20 +409,29 @@ def compare_models(
     for model_path in model_paths:
         print(f"\n[비교 평가] 모델 평가 중: {model_path}")
         model = SentenceTransformer(model_path)
-        result = evaluate_detailed(
-            model=model,
-            passages=passages,
-            eval_pairs_path=eval_pairs_path,
-            k_values=k_values,
-            template=template,
-        )
-        
-        comparison_results.append({
-            "model_path": model_path,
-            "metrics": result.metrics,
-            "source_stats": dict(result.source_stats),
-            "failed_count": len(result.failed_queries),
-        })
+        try:
+            result = evaluate_detailed(
+                model=model,
+                passages=passages,
+                eval_pairs_path=eval_pairs_path,
+                k_values=k_values,
+                template=template,
+                batch_size=batch_size,
+            )
+            
+            comparison_results.append({
+                "model_path": model_path,
+                "metrics": result.metrics,
+                "source_stats": dict(result.source_stats),
+                "failed_count": len(result.failed_queries),
+            })
+        finally:
+            # 메모리 정리
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
     
     # 비교 리포트 생성
     lines = []
