@@ -587,10 +587,18 @@ class BiEncoderTrainer:
             import gc
             try:
                 if torch.cuda.is_available():
+                    # 강력한 메모리 정리
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
-                gc.collect()
-                logger.debug("학습 종료 후 GPU 메모리 정리 완료")
+                    # 모든 GPU 디바이스에서 메모리 정리
+                    for i in range(torch.cuda.device_count()):
+                        with torch.cuda.device(i):
+                            torch.cuda.empty_cache()
+                            torch.cuda.ipc_collect()  # IPC 메모리 정리
+                    # Python GC로 남은 객체 정리
+                    gc.collect()
+                    gc.collect()  # 추가 GC (순환 참조 정리)
+                    logger.debug("학습 종료 후 GPU 메모리 정리 완료")
             except Exception:
                 pass
 

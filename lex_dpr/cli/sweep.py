@@ -949,13 +949,17 @@ def _run_agent_impl(
             import torch
             import gc
             if torch.cuda.is_available():
+                # 강력한 메모리 정리
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
                 # 모든 GPU 디바이스에서 메모리 정리
                 for i in range(torch.cuda.device_count()):
                     with torch.cuda.device(i):
                         torch.cuda.empty_cache()
+                        torch.cuda.ipc_collect()  # IPC 메모리 정리
+                # Python GC로 남은 객체 정리
                 gc.collect()
+                gc.collect()  # 추가 GC (순환 참조 정리)
                 logger.debug("Run 시작 전 GPU 메모리 정리 완료")
         except Exception as e:
             logger.debug(f"메모리 정리 중 오류 (무시됨): {e}")
@@ -1086,28 +1090,35 @@ def _run_agent_impl(
             # 각 run 사이에 메모리 정리 (time_window 내에서만)
             # time_window 밖에서는 다른 프로세스(VLLM 등)가 GPU를 사용 중일 수 있으므로 정리하지 않음
             try:
+                # time_window 체크
+                should_cleanup = True
                 if time_window:
                     in_window, _ = _check_time_window(time_window, timezone)
                     if not in_window:
                         logger.debug("Time window 밖이므로 GPU 메모리 정리 건너뜀")
-                        return
+                        should_cleanup = False
                 
                 # time_window 내에서만 메모리 정리
-                try:
-                    import torch
-                    import gc
-                    if torch is not None and torch.cuda.is_available():
-                        # 모든 GPU에서 메모리 정리
-                        torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
-                        # 추가 정리: 모든 GPU 디바이스 확인
-                        for i in range(torch.cuda.device_count()):
-                            with torch.cuda.device(i):
-                                torch.cuda.empty_cache()
-                    gc.collect()
-                    logger.debug("Run 종료 후 GPU 메모리 정리 완료 (time_window 내)")
-                except ImportError:
-                    pass  # torch가 설치되지 않은 경우 무시
+                if should_cleanup:
+                    try:
+                        import torch
+                        import gc
+                        if torch is not None and torch.cuda.is_available():
+                            # 모든 GPU에서 강력한 메모리 정리
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                            # 추가 정리: 모든 GPU 디바이스 확인
+                            for i in range(torch.cuda.device_count()):
+                                with torch.cuda.device(i):
+                                    torch.cuda.empty_cache()
+                                    torch.cuda.ipc_collect()  # IPC 메모리 정리
+                            # Python GC로 남은 객체 정리
+                            gc.collect()
+                            # 추가 GC (순환 참조 정리)
+                            gc.collect()
+                            logger.debug("Run 종료 후 GPU 메모리 정리 완료 (time_window 내)")
+                    except ImportError:
+                        pass  # torch가 설치되지 않은 경우 무시
             except Exception as e:
                 logger.debug(f"메모리 정리 중 오류 (무시됨): {e}")
                 pass
