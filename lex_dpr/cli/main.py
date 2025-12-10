@@ -366,8 +366,8 @@ def api_command(
         sys.argv = original_argv
 
 
-@app.command("eval")
-def eval_command():
+@app.command("eval", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def eval_command(ctx: typer.Context):
     """
     학습된 Bi-Encoder 체크포인트를 이용해 Retrieval 메트릭을 평가합니다.
 
@@ -377,11 +377,16 @@ def eval_command():
       poetry run lex-dpr eval
       poetry run lex-dpr eval --model checkpoint/lexdpr/bi_encoder --eval-pairs data/pairs_eval.jsonl
       poetry run lex-dpr eval --k-values 1 3 5 10 --output eval_results.json
+      poetry run lex-dpr eval --compare-models jhgan/ko-sroberta-multitask dragonkue/BGE-m3-ko --wandb
     """
     original_argv = sys.argv.copy()
     try:
         # 'lex-dpr eval' 이후의 인자를 그대로 전달
-        remaining_args = sys.argv[2:] if len(sys.argv) > 2 else []
+        # ctx.args는 Typer가 파싱하지 않은 인자들
+        remaining_args = list(ctx.args) if ctx.args else []
+        # sys.argv[2:]도 확인 (Typer가 파싱하지 않은 경우)
+        if not remaining_args and len(sys.argv) > 2:
+            remaining_args = sys.argv[2:]
         sys.argv = ["evaluate"] + remaining_args
         eval_cli.main()
     finally:
