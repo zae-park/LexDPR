@@ -35,24 +35,13 @@ if [ ! -f "$EVAL_PAIRS" ]; then
 else
     # Base model 평가 (ko-simcse 또는 bge-m3-ko 등)
     # 필요에 따라 모델 경로를 변경하세요: jhgan/ko-sroberta-multitask, dragonkue/BGE-m3-ko
-    BASE_MODEL="jhgan/ko-sroberta-multitask"  # ko-simcse base model
-    echo "  Base Model: $BASE_MODEL"
-    poetry run lex-dpr eval \
-      --model "$BASE_MODEL" \
-      --passages data/processed/merged_corpus.jsonl \
-      --eval-pairs "$EVAL_PAIRS" \
-      --k-values 1 3 5 10 20 \
-      --template bge \
-      --batch-size 16 \
-      --output data/processed/base_model_eval.json \
-      --report data/processed/base_model_eval_report.txt \
-      --wandb \
-      --wandb-project lexdpr-eval \
-      --wandb-name "base-model-eval"
+
+      poetry run lex-dpr eval   --model jhgan/ko-sroberta-multitask   --eval-pairs data/pairs_eval.jsonl   --wandb   --wandb-project lexdpr-eval   --wandb-name ko-simcse-baseline   --report report_ko_simcse.txt   --output results_ko_simcse.json   --batch-size 8
+      poetry run lex-dpr eval   --model dragonkue/BGE-m3-ko   --eval-pairs data/pairs_eval.jsonl   --wandb   --wandb-project lexdpr-eval   --wandb-name BGE-m3-ko-baseline   --report report_BGE_m3_ko.txt   --output results_bge_m3_ko.json   --batch-size 4
 fi
 
-echo "[6/9] 학습 시작"
-poetry run python entrypoint_train.py 
+echo "[6/9] 학습 시작 (WandB Sweep 사용)"
+poetry run lex-dpr sweep --config configs/sweep.yaml 
 
 
 echo "[7/9] 임베딩 생성: corpus → embeds"
