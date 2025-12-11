@@ -152,18 +152,28 @@ lex_dpr/data_processing/
 
 ## ⚙️ 실행 예시
 
+### 기본 워크플로우
+
 ```bash
 # 1. 법령 전처리
 poetry run python -m lex_dpr.data_processing.preprocess_law \
   --src data/statutes/000030.json \
   --out data/processed/law_passages.jsonl
 
-# 2. 판례 전처리
+# 2. 판례 전처리 (선택적 - 판례 원본 JSON 방식 사용 시 불필요)
 poetry run python -m lex_dpr.data_processing.preprocess_prec \
   --src data/no_action_letters/2015da12345.json \
   --out data/processed/prec_passages.jsonl
 
-# 3. pair 생성
+# 3. pair 생성 (권장: 판례 원본 JSON 방식)
+poetry run python -m lex_dpr.data_processing.make_pairs \
+  --law data/processed/law_passages.jsonl \
+  --prec-json-dir data/precedents \  # 판례 원본 JSON 디렉토리
+  --out data/processed/pairs_train.jsonl \
+  --max-positives-per-prec 5 \
+  --hn_per_q 2
+
+# 또는 기존 방식 (판례 passage 기반)
 poetry run python -m lex_dpr.data_processing.make_pairs \
   --law data/processed/law_passages.jsonl \
   --prec data/processed/prec_passages.jsonl \
@@ -179,6 +189,25 @@ poetry run python -m lex_dpr.data_processing.validate_dataset \
   --corpus data/processed/merged_corpus.jsonl \
   --pairs data/processed/pairs_train.jsonl
 ```
+
+### 판례 원본 JSON 방식 (권장) vs 판례 Passage 방식
+
+#### 판례 원본 JSON 방식 (권장) ✅
+- **장점**:
+  - 실제 RAG 시나리오와 일치 (판례 질의 → 법령 검색)
+  - 참조조문 기반 정확한 Ground Truth
+  - 질의 품질 향상 (판시사항 기반)
+  - 데이터 효율성 (중복 제거)
+- **사용법**:
+  ```bash
+  --prec-json-dir data/precedents  # 판례 원본 JSON 파일들이 있는 디렉토리
+  ```
+
+#### 판례 Passage 방식 (기존)
+- **사용법**:
+  ```bash
+  --prec data/processed/prec_passages.jsonl  # 전처리된 판례 passage 파일
+  ```
 
 ---
 

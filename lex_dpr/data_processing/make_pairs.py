@@ -330,6 +330,7 @@ def _process_single_precedent_json(
     admin_passages: List[Dict[str, Any]],
     max_positives: int,
     hn_per_q: int,
+    error_log: Optional[List[Tuple[str, str]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """단일 판례 JSON 파일 처리 (병렬화용 워커 함수)"""
     try:
@@ -346,8 +347,14 @@ def _process_single_precedent_json(
             hn_per_q=hn_per_q,
         )
         return pair
+    except json.JSONDecodeError as e:
+        if error_log is not None:
+            error_log.append((fp, f"JSON 파싱 에러: {str(e)}"))
+        return None
     except Exception as e:
-        return None  # 에러는 상위에서 처리
+        if error_log is not None:
+            error_log.append((fp, f"처리 에러: {str(e)}"))
+        return None
 
 
 def build_pairs_from_precedent_jsons(
@@ -396,13 +403,17 @@ def build_pairs_from_precedent_jsons(
     
     files = sorted(p.glob(glob_pattern))
     if not files:
+        print(f"[make_pairs]   경고: {prec_json_dir}에서 JSON 파일을 찾을 수 없습니다 (패턴: {glob_pattern})")
         return []
+    
+    print(f"[make_pairs]   발견된 판례 JSON 파일: {len(files):,}개")
     
     # 병렬 처리 워커 수 결정
     if max_workers is None:
         max_workers = min(len(files), os.cpu_count() or 4)
     
     rows: List[Dict[str, Any]] = []
+    error_log: List[Tuple[str, str]] = []  # 에러 로그 (파일 경로, 에러 메시지)
     
     # 병렬 처리: ThreadPoolExecutor 사용 (I/O + CPU 혼합 작업)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -417,6 +428,7 @@ def build_pairs_from_precedent_jsons(
                 admin_passages,
                 max_positives,
                 hn_per_q,
+                error_log,  # 에러 로그 전달
             ): fp
             for fp in files
         }
@@ -431,7 +443,20 @@ def build_pairs_from_precedent_jsons(
                     if pair:
                         rows.append(pair)
                 except Exception as e:
-                    tqdm.write(f"[warn] skip {fp}: {e}")
+                    error_log.append((str(fp), f"예외 발생: {str(e)}"))
+    
+    # 에러 로그 출력
+    if error_log:
+        print(f"[make_pairs]   경고: {len(error_log):,}개 파일 처리 실패")
+        if len(error_log) <= 10:
+            for fp, err_msg in error_log:
+                print(f"      - {Path(fp).name}: {err_msg}")
+        else:
+            for fp, err_msg in error_log[:10]:
+                print(f"      - {Path(fp).name}: {err_msg}")
+            print(f"      ... 외 {len(error_log) - 10}개 파일")
+    
+    print(f"[make_pairs]   성공적으로 처리된 판례: {len(rows):,}개 ({len(rows)/max(1, len(files))*100:.1f}%)")
     
     return rows
 
@@ -885,6 +910,152 @@ def dedup_by_query(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 # =========================
+# 데이터 쌍 구조 검증 및 통계
+# =========================
+def validate_pair_structure(
+    rows: List[Dict[str, Any]], 
+    all_passages: Dict[str, Dict[str, Any]],
+    sample_size: int = 5
+) -> Dict[str, Any]:
+    """
+    생성된 쌍의 구조를 검증하고 통계를 반환.
+    
+    Args:
+        rows: 생성된 쌍 리스트
+        all_passages: 모든 passage 딕셔너리 {passage_id: passage_dict}
+        sample_size: 출력할 샘플 개수
+    
+    Returns:
+        검증 결과 및 통계 딕셔너리
+    """
+    stats = {
+        "total_pairs": len(rows),
+        "valid_pairs": 0,
+        "invalid_pairs": 0,
+        "errors": [],
+        "type_distribution": {},
+        "positive_count_distribution": {},
+        "hard_negative_count_distribution": {},
+        "samples": [],
+    }
+    
+    for i, row in enumerate(rows):
+        errors = []
+        
+        # 1. 필수 필드 확인
+        if not row.get("query_text"):
+            errors.append("query_text 없음")
+        if not row.get("positive_passages"):
+            errors.append("positive_passages 없음")
+        elif not isinstance(row["positive_passages"], list):
+            errors.append("positive_passages가 리스트가 아님")
+        elif len(row["positive_passages"]) == 0:
+            errors.append("positive_passages가 비어있음")
+        
+        # 2. Positive passage 존재 여부 확인
+        if row.get("positive_passages"):
+            missing_positives = []
+            for pid in row["positive_passages"]:
+                if pid not in all_passages:
+                    missing_positives.append(pid)
+            if missing_positives:
+                errors.append(f"존재하지 않는 positive passages: {missing_positives[:3]}")
+        
+        # 3. Hard negative 존재 여부 확인
+        if row.get("hard_negatives"):
+            if not isinstance(row["hard_negatives"], list):
+                errors.append("hard_negatives가 리스트가 아님")
+            else:
+                missing_negatives = []
+                for nid in row["hard_negatives"]:
+                    if nid not in all_passages:
+                        missing_negatives.append(nid)
+                if missing_negatives:
+                    errors.append(f"존재하지 않는 hard negatives: {missing_negatives[:3]}")
+        
+        # 통계 수집
+        if errors:
+            stats["invalid_pairs"] += 1
+            if len(stats["errors"]) < 10:  # 최대 10개 에러만 저장
+                stats["errors"].append({
+                    "index": i,
+                    "query_text": row.get("query_text", "")[:100],
+                    "errors": errors
+                })
+        else:
+            stats["valid_pairs"] += 1
+            
+            # 타입별 분포
+            meta_type = (row.get("meta") or {}).get("type", "unknown")
+            stats["type_distribution"][meta_type] = stats["type_distribution"].get(meta_type, 0) + 1
+            
+            # Positive 개수 분포
+            num_positives = len(row.get("positive_passages", []))
+            stats["positive_count_distribution"][num_positives] = stats["positive_count_distribution"].get(num_positives, 0) + 1
+            
+            # Hard negative 개수 분포
+            num_negatives = len(row.get("hard_negatives", []))
+            stats["hard_negative_count_distribution"][num_negatives] = stats["hard_negative_count_distribution"].get(num_negatives, 0) + 1
+            
+            # 샘플 수집 (각 타입별로 최대 sample_size개)
+            if len([s for s in stats["samples"] if (s.get("meta") or {}).get("type") == meta_type]) < sample_size:
+                stats["samples"].append({
+                    "query_text": row.get("query_text", ""),
+                    "positive_passages": row.get("positive_passages", [])[:5],  # 최대 5개만
+                    "hard_negatives": row.get("hard_negatives", [])[:3],  # 최대 3개만
+                    "meta": row.get("meta", {})
+                })
+    
+    return stats
+
+
+def print_validation_report(stats: Dict[str, Any]) -> None:
+    """검증 결과를 출력"""
+    print("\n" + "="*80)
+    print("[make_pairs] 데이터 쌍 구조 검증 결과")
+    print("="*80)
+    
+    print(f"\n📊 전체 통계:")
+    print(f"  총 쌍 수: {stats['total_pairs']:,}")
+    print(f"  유효한 쌍: {stats['valid_pairs']:,} ({stats['valid_pairs']/max(1, stats['total_pairs'])*100:.1f}%)")
+    print(f"  무효한 쌍: {stats['invalid_pairs']:,} ({stats['invalid_pairs']/max(1, stats['total_pairs'])*100:.1f}%)")
+    
+    if stats['errors']:
+        print(f"\n⚠️  에러 사례 (최대 10개):")
+        for err in stats['errors'][:10]:
+            print(f"  [{err['index']}] {err['query_text']}")
+            for e in err['errors']:
+                print(f"      - {e}")
+    
+    if stats['type_distribution']:
+        print(f"\n📋 타입별 분포:")
+        for type_name, count in sorted(stats['type_distribution'].items(), key=lambda x: x[1], reverse=True):
+            print(f"  {type_name}: {count:,} ({count/max(1, stats['valid_pairs'])*100:.1f}%)")
+    
+    if stats['positive_count_distribution']:
+        print(f"\n✅ Positive 개수 분포:")
+        for count, num_pairs in sorted(stats['positive_count_distribution'].items()):
+            print(f"  {count}개: {num_pairs:,} 쌍 ({num_pairs/max(1, stats['valid_pairs'])*100:.1f}%)")
+    
+    if stats['hard_negative_count_distribution']:
+        print(f"\n❌ Hard Negative 개수 분포:")
+        for count, num_pairs in sorted(stats['hard_negative_count_distribution'].items()):
+            print(f"  {count}개: {num_pairs:,} 쌍 ({num_pairs/max(1, stats['valid_pairs'])*100:.1f}%)")
+    
+    if stats['samples']:
+        print(f"\n📝 샘플 데이터 (각 타입별 최대 5개):")
+        for i, sample in enumerate(stats['samples'][:20], 1):  # 최대 20개 출력
+            meta_type = (sample.get("meta") or {}).get("type", "unknown")
+            print(f"\n  [{i}] 타입: {meta_type}")
+            print(f"      질의: {sample['query_text'][:150]}...")
+            print(f"      Positive ({len(sample['positive_passages'])}개): {sample['positive_passages']}")
+            if sample.get('hard_negatives'):
+                print(f"      Hard Negative ({len(sample['hard_negatives'])}개): {sample['hard_negatives']}")
+    
+    print("\n" + "="*80)
+
+
+# =========================
 # Main maker
 # =========================
 def make_pairs(
@@ -991,6 +1162,23 @@ def make_pairs(
     after = len(rows)
     print(f"[make_pairs]   중복 제거: {before:,} → {after:,}")
 
+    # 6) 데이터 쌍 구조 검증 및 통계
+    print("[make_pairs] 데이터 쌍 구조 검증 중...")
+    all_passages_dict = {}
+    for p in law + admin + prec:
+        pid = p.get("id")
+        if pid:
+            all_passages_dict[pid] = p
+    
+    validation_stats = validate_pair_structure(rows, all_passages_dict, sample_size=5)
+    print_validation_report(validation_stats)
+    
+    # 검증 실패 시 경고
+    if validation_stats["invalid_pairs"] > 0:
+        print(f"\n⚠️  경고: {validation_stats['invalid_pairs']:,}개의 무효한 쌍이 발견되었습니다.")
+        if validation_stats["invalid_pairs"] / max(1, validation_stats["total_pairs"]) > 0.1:
+            print("⚠️  무효한 쌍 비율이 10%를 초과합니다. 데이터를 확인해주세요.")
+
     # -------------------------
     # Train / Valid / Test split
     # -------------------------
@@ -1029,11 +1217,45 @@ def make_pairs(
     write_jsonl(str(test_path), test_rows)
 
     elapsed = time.time() - t0
-    print(f"[make_pairs] total queries: {len(rows):,}")
-    print(f"[make_pairs]   train: {len(train_rows):,} → {train_path}")
-    print(f"[make_pairs]   valid: {len(valid_rows):,} → {valid_path}")
-    print(f"[make_pairs]   test : {len(test_rows):,} → {test_path}")
-    print(f"[make_pairs] 완료 (소요 시간: {elapsed:.1f}초)")
+    
+    # 최종 요약 통계
+    print("\n" + "="*80)
+    print("[make_pairs] 최종 요약")
+    print("="*80)
+    print(f"\n📊 생성된 쌍 통계:")
+    print(f"  총 쌍 수: {len(rows):,}")
+    print(f"  Train: {len(train_rows):,} ({len(train_rows)/max(1, len(rows))*100:.1f}%) → {train_path}")
+    print(f"  Valid: {len(valid_rows):,} ({len(valid_rows)/max(1, len(rows))*100:.1f}%) → {valid_path}")
+    print(f"  Test : {len(test_rows):,} ({len(test_rows)/max(1, len(rows))*100:.1f}%) → {test_path}")
+    
+    # 타입별 통계
+    type_counts = {}
+    for row in rows:
+        meta_type = (row.get("meta") or {}).get("type", "unknown")
+        type_counts[meta_type] = type_counts.get(meta_type, 0) + 1
+    
+    if type_counts:
+        print(f"\n📋 타입별 쌍 수:")
+        for type_name, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {type_name}: {count:,} ({count/max(1, len(rows))*100:.1f}%)")
+    
+    # Positive/Hard Negative 통계
+    total_positives = sum(len(r.get("positive_passages", [])) for r in rows)
+    total_negatives = sum(len(r.get("hard_negatives", [])) for r in rows)
+    avg_positives = total_positives / max(1, len(rows))
+    avg_negatives = total_negatives / max(1, len(rows))
+    
+    print(f"\n✅ Positive 통계:")
+    print(f"  총 Positive 개수: {total_positives:,}")
+    print(f"  쌍당 평균 Positive 개수: {avg_positives:.2f}")
+    
+    print(f"\n❌ Hard Negative 통계:")
+    print(f"  총 Hard Negative 개수: {total_negatives:,}")
+    print(f"  쌍당 평균 Hard Negative 개수: {avg_negatives:.2f}")
+    
+    print(f"\n⏱️  소요 시간: {elapsed:.1f}초")
+    print("="*80)
+    print("[make_pairs] 완료 ✅")
 
 
 # =========================
