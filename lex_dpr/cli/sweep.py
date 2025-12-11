@@ -506,10 +506,11 @@ early_terminate:
 # 탐색할 하이퍼파라미터 (넉넉한 범위)
 parameters:
   # 학습률 (넉넉한 범위)
+  # log_uniform 분포: 작은 학습률에 더 많은 샘플링 (일반적으로 작은 학습률이 더 안정적)
   trainer.lr:
     distribution: log_uniform_values
-    min: 0.000001  # 1e-5
-    max: 0.001     # 5e-4
+    min: 0.000001  # 1e-6
+    max: 0.001     # 1e-3
   
   # Loss temperature (넉넉한 범위)
   trainer.temperature:
@@ -518,10 +519,11 @@ parameters:
     max: 0.3
   
   # Optimizer weight decay (넉넉한 범위, continuous)
+  # 정규화 강도 조절: 0.0 (정규화 없음) ~ 0.5 (강한 정규화)
   trainer.weight_decay:
     distribution: uniform
     min: 0.0
-    max: 0.1
+    max: 0.5
   
   # Warmup ratio (넉넉한 범위, continuous)
   trainer.warmup_ratio:
@@ -530,8 +532,10 @@ parameters:
     max: 0.2
   
   # Gradient accumulation steps (넉넉한 범위)
+  # 효과적인 배치 크기 = 배치 크기 × gradient_accumulation_steps
+  # 메모리가 부족할 때 작은 배치 크기와 큰 accumulation steps 조합 사용
   trainer.gradient_accumulation_steps:
-    values: [2, 4, 8, 16, 32]
+    values: [2, 4, 8, 16, 32, 64]
   
   # Gradient clipping (넉넉한 범위, continuous)
   trainer.gradient_clip_norm:
@@ -553,11 +557,11 @@ parameters:
     min: 0.0
     max: 0.3
   
-  # 배치 크기 (메모리 효율적인 범위로 제한)
-  # 작은 배치 크기(16-64)로도 contrastive learning에서 충분히 효과적입니다.
+  # 배치 크기 (메모리 효율적인 범위)
   # 배치 내 negative sampling 덕분에 작은 배치로도 학습이 가능합니다.
+  # 메모리가 충분한 경우 큰 배치 크기로 학습 속도 향상 가능
   data.batches.bi:
-    values: [16, 32, 64, 128]  # 256 제거 (OOM 방지)
+    values: [32, 64, 128, 256]  # 메모리 허용 시 큰 배치 크기 사용 가능
   
   # 데이터 증폭 (integer, categorical 유지)
   data.multiply:
@@ -570,18 +574,20 @@ parameters:
   
   # Hard negative 비율 (use_hard_negatives=true일 때만 적용)
   # 0.0 = in-batch negative만 사용, 1.0 = hard negative만 사용
+  # 중간 값은 두 방식을 혼합하여 사용
   data.hard_negative_ratio:
     distribution: uniform
     min: 0.0
-    max: 1.0  # 최대 50%까지 hard negative 사용 (나머지는 in-batch)
+    max: 1.0
   
   # Validation loss 계산 시 전체 corpus에서 negative 샘플링
   trainer.use_full_corpus_negatives:
     values: [true]  # 항상 활성화 (실전 모방)
   
   # Validation loss 계산 시 각 query당 샘플링할 negative 개수
+  # 작은 값(64)은 빠른 평가, 큰 값(1024)은 더 정확한 평가
   trainer.num_negatives_per_query:
-    values: [512, 1024, 2048]  # 전체 corpus에서 샘플링할 negative 개수
+    values: [64, 256, 512, 1024]  # 전체 corpus에서 샘플링할 negative 개수 (메모리와 정확도 트레이드오프)
   
   # 기본 모델 (categorical)
   model.bi_model:
@@ -625,8 +631,9 @@ fixed:
 project: lexdpr
 entity: zae-park  # WandB 엔티티 (선택사항, 없으면 현재 로그인한 사용자 사용)
 
-# 시간 제한 설정 (기본값: 새벽 23시~8시 KST)
+# 시간 제한 설정 (기본값: 오후 5시~새벽 7시 KST)
 # 여러 날짜에 나눠서 실행할 때 사용
+# 17-7은 17시(오후 5시)부터 다음날 7시(새벽 7시)까지 실행
 time_window: "17-7"  # 17시~7시에만 실행 (KST 기준)
 timezone: "Asia/Seoul"
 """
@@ -699,7 +706,13 @@ def sweep_preset(
     넉넉한 범위의 WandB Sweep 설정 파일을 생성하고 바로 실행합니다.
     
     넉넉한 하이퍼파라미터 범위로 설정되어 있어 다양한 조합을 탐색할 수 있습니다.
-    생성된 설정 파일에는 time_window가 1-8시(KST)로 자동 설정됩니다.
+    생성된 설정 파일에는 time_window가 17-7시(KST)로 자동 설정됩니다.
+    
+    주요 하이퍼파라미터 범위:
+    - 배치 크기: 32~256 (메모리 허용 시 큰 배치 사용 가능)
+    - Weight Decay: 0.0~0.5 (넉넉한 정규화 범위)
+    - Gradient Accumulation: 2~64 (효과적인 배치 크기 조절)
+    - Validation Negative 샘플링: 64~1024 (메모리와 정확도 트레이드오프)
     
     예시:
       poetry run lex-dpr sweep preset
@@ -735,17 +748,19 @@ def sweep_preset(
     logger.info("📋 포함된 하이퍼파라미터 범위:")
     logger.info("  - 학습률: 1e-6 ~ 1e-3 (log_uniform)")
     logger.info("  - Temperature: 0.01 ~ 0.3 (uniform)")
-    logger.info("  - Weight Decay: 0.0 ~ 0.1 (uniform)")
-    logger.info("  - Warmup Ratio: 0.0 ~ 0.3 (uniform)")
-    logger.info("  - Gradient Accumulation Steps: [2, 4, 8, 16, 32]")
-    logger.info("  - Gradient Clipping: 0.0 ~ 5.0 (uniform)")
-    logger.info("  - LoRA rank: [4, 8, 16, 32, 64]")
-    logger.info("  - LoRA alpha: [8, 16, 32, 64, 128]")
+    logger.info("  - Weight Decay: 0.0 ~ 0.5 (uniform)")
+    logger.info("  - Warmup Ratio: 0.0 ~ 0.2 (uniform)")
+    logger.info("  - Gradient Accumulation Steps: [2, 4, 8, 16, 32, 64]")
+    logger.info("  - Gradient Clipping: 1.0 ~ 20.0 (uniform)")
+    logger.info("  - LoRA rank: [8, 16, 32, 64]")
+    logger.info("  - LoRA alpha: [16, 32, 64, 128]")
     logger.info("  - LoRA dropout: 0.0 ~ 0.3 (uniform)")
-    logger.info("  - 배치 크기: [16, 32, 64] (메모리 효율적 범위)")
+    logger.info("  - 배치 크기: [32, 64, 128, 256]")
     logger.info("  - 데이터 증폭: [0, 1, 2, 3]")
+    logger.info("  - Hard Negative 비율: 0.0 ~ 1.0 (uniform)")
+    logger.info("  - Validation Negative 샘플링: [64, 256, 512, 1024]")
     logger.info("  - 기본 모델: [ko-simcse, bge-m3-ko]")
-    logger.info("  - 시퀀스 길이: [128, 256, 512] (메모리 효율적 범위)")
+    logger.info("  - 시퀀스 길이: [128, 256, 384, 512]")
     logger.info("")
     
     if run:
