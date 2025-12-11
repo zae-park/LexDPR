@@ -508,8 +508,8 @@ parameters:
   # 학습률 (넉넉한 범위)
   trainer.lr:
     distribution: log_uniform_values
-    min: 0.000001  # 1e-6
-    max: 0.001     # 1e-3
+    min: 0.000001  # 1e-5
+    max: 0.001     # 5e-4
   
   # Loss temperature (넉넉한 범위)
   trainer.temperature:
@@ -536,16 +536,16 @@ parameters:
   # Gradient clipping (넉넉한 범위, continuous)
   trainer.gradient_clip_norm:
     distribution: uniform
-    min: 0.0
-    max: 5.0
+    min: 1.0
+    max: 20.0
   
   # LoRA rank (integer, categorical 유지)
   model.peft.r:
-    values: [4, 8, 16, 32, 64]
+    values: [8, 16, 32, 64]
   
   # LoRA alpha (integer, categorical 유지)
   model.peft.alpha:
-    values: [8, 16, 32, 64, 128]
+    values: [16, 32, 64, 128]
   
   # LoRA dropout (넉넉한 범위, continuous)
   model.peft.dropout:
@@ -562,6 +562,26 @@ parameters:
   # 데이터 증폭 (integer, categorical 유지)
   data.multiply:
     values: [0, 1, 2, 3]
+  
+  # Hard negative 사용 여부 및 비율
+  # Hard negative와 in-batch negative를 섞어서 사용
+  data.use_hard_negatives:
+    values: [false, true]  # false = in-batch만, true = hard negative 포함
+  
+  # Hard negative 비율 (use_hard_negatives=true일 때만 적용)
+  # 0.0 = in-batch negative만 사용, 1.0 = hard negative만 사용
+  data.hard_negative_ratio:
+    distribution: uniform
+    min: 0.0
+    max: 1.0  # 최대 50%까지 hard negative 사용 (나머지는 in-batch)
+  
+  # Validation loss 계산 시 전체 corpus에서 negative 샘플링
+  trainer.use_full_corpus_negatives:
+    values: [true]  # 항상 활성화 (실전 모방)
+  
+  # Validation loss 계산 시 각 query당 샘플링할 negative 개수
+  trainer.num_negatives_per_query:
+    values: [512, 1024, 2048]  # 전체 corpus에서 샘플링할 negative 개수
   
   # 기본 모델 (categorical)
   model.bi_model:
