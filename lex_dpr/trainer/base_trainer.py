@@ -260,6 +260,14 @@ class BiEncoderTrainer:
     def _build_examples(self) -> List[InputExample]:
         examples: List[InputExample] = []
         miss_pos = 0
+        
+        # Hard negative 사용 여부 및 비율 확인
+        use_hard_negatives = bool(getattr(self.cfg.data, "use_hard_negatives", False))
+        hard_negative_ratio = float(getattr(self.cfg.data, "hard_negative_ratio", 0.0))
+        
+        if use_hard_negatives and hard_negative_ratio > 0:
+            logger.info(f"Hard negative 사용: 비율={hard_negative_ratio:.2f}")
+        
         for row in self.pairs:
             q_text = tq(row["query_text"], self.template_mode)
             for pid in row["positive_passages"]:
@@ -268,7 +276,41 @@ class BiEncoderTrainer:
                     miss_pos += 1
                     continue
                 p_text = tp(passage["text"], self.template_mode)
-                examples.append(InputExample(texts=[q_text, p_text]))
+                
+                # Hard negative 포함 여부 결정
+                if use_hard_negatives and hard_negative_ratio > 0:
+                    # Hard negative가 있는 경우에만 포함
+                    hard_neg_ids = [nid for nid in row.get("hard_negatives", []) if nid in self.passages]
+                    if hard_neg_ids:
+                        import random
+                        # 비율에 따라 샘플링할 hard negative 개수 결정
+                        # 예상 배치 크기를 고려하여 hard negative 개수 결정
+                        # hard_negative_ratio에 따라 샘플링
+                        # 예: 배치 크기 128, hard_negative_ratio=0.3이면
+                        #     in-batch negative = 127개, hard negative = 약 54개 (127 * 0.3 / (1-0.3))
+                        #     하지만 실제로는 데이터셋에서 샘플링하므로, 평균적으로 비율에 맞게 샘플링
+                        
+                        # Hard negative를 비율에 따라 샘플링
+                        # 실제 비율은 배치 내에서 결정되므로, 여기서는 가능한 한 포함
+                        # 나중에 loss 함수에서 비율 조절
+                        neg_texts = []
+                        for nid in hard_neg_ids:
+                            neg_passage = self.passages.get(nid)
+                            if neg_passage:
+                                neg_texts.append(tp(neg_passage["text"], self.template_mode))
+                        
+                        if neg_texts:
+                            # [query, positive, ...hard_negatives] 형태로 생성
+                            # MultipleNegativesRankingLoss는 기본적으로 (query, positive)만 처리하므로,
+                            # hard negative는 무시되지만, 나중에 custom loss에서 사용 가능
+                            examples.append(InputExample(texts=[q_text, p_text] + neg_texts))
+                        else:
+                            examples.append(InputExample(texts=[q_text, p_text]))
+                    else:
+                        examples.append(InputExample(texts=[q_text, p_text]))
+                else:
+                    # Hard negative 사용 안 함
+                    examples.append(InputExample(texts=[q_text, p_text]))
 
         if miss_pos:
             logger.warning(f"corpus에 없는 positive passage ID {miss_pos}개 건너뜀")
@@ -313,7 +355,22 @@ class BiEncoderTrainer:
             shuffle=True,
             drop_last=False,
         )
-        loss = losses.MultipleNegativesRankingLoss(self.model, scale=self.cfg.trainer.temperature)
+        
+        # Hard negative 사용 여부 및 비율 확인
+        use_hard_negatives = bool(getattr(self.cfg.data, "use_hard_negatives", False))
+        hard_negative_ratio = float(getattr(self.cfg.data, "hard_negative_ratio", 0.0))
+        
+        # Loss 함수 선택
+        if use_hard_negatives and hard_negative_ratio > 0:
+            from .losses import build_mixed_negatives_loss
+            loss = build_mixed_negatives_loss(
+                self.model,
+                temperature=self.cfg.trainer.temperature,
+                hard_negative_ratio=hard_negative_ratio
+            )
+            logger.info(f"MixedNegativesRankingLoss 사용: hard_negative_ratio={hard_negative_ratio:.2f}")
+        else:
+            loss = losses.MultipleNegativesRankingLoss(self.model, scale=self.cfg.trainer.temperature)
         
         # Gradient clipping 적용
         gradient_clip_norm = float(getattr(self.cfg.trainer, "gradient_clip_norm", 0.0))
@@ -343,6 +400,10 @@ class BiEncoderTrainer:
             
             # Validation loss evaluator 추가
             from ..eval import ValidationLossEvaluator
+            # Validation loss 계산 시 전체 corpus에서 negative 샘플링 (실전 모방)
+            use_full_corpus_negatives = bool(getattr(self.cfg.trainer, "use_full_corpus_negatives", True))
+            num_negatives_per_query = int(getattr(self.cfg.trainer, "num_negatives_per_query", 1000))
+            
             val_loss_evaluator = ValidationLossEvaluator(
                 model=self.model,
                 passages=self.passages,
@@ -351,6 +412,8 @@ class BiEncoderTrainer:
                 temperature=self.cfg.trainer.temperature,
                 template=self.template_mode,
                 batch_size=min(32, self.batch_size),
+                use_full_corpus_negatives=use_full_corpus_negatives,
+                num_negatives_per_query=num_negatives_per_query,
             )
             
             # 두 evaluator를 결합
