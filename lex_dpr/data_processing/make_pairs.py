@@ -1677,6 +1677,22 @@ def make_pairs(
     print(f"  쌍당 평균 Hard Negative 개수: {avg_negatives:.2f}")
     
     print(f"\n⏱️  소요 시간: {elapsed:.1f}초")
+    
+    # Fallback passage를 별도 파일로 저장 (corpus 병합용)
+    if fallback_passages_all:
+        from pathlib import Path
+        out_path_obj = Path(out_path)
+        parent = out_path_obj.parent
+        fallback_passages_path = parent / "prec_fallback_passages.jsonl"
+        write_jsonl(str(fallback_passages_path), fallback_passages_all)
+        print(f"\n💾 Fallback passage 저장: {len(fallback_passages_all):,}개 → {fallback_passages_path}")
+        print(f"   💡 다음 명령어로 corpus에 포함하세요:")
+        print(f"   poetry run python -m lex_dpr.data_processing.merge_corpus \\")
+        print(f"     --law data/processed/law_passages.jsonl \\")
+        print(f"     --admin data/processed/admin_passages.jsonl \\")
+        print(f"     --prec {fallback_passages_path} \\")
+        print(f"     --out data/processed/merged_corpus.jsonl")
+    
     print("="*80)
     print("[make_pairs] 완료 ✅")
 
