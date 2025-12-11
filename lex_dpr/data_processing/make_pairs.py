@@ -1570,13 +1570,28 @@ def make_pairs(
     after = len(rows)
     print(f"[make_pairs]   중복 제거: {before:,} → {after:,}")
 
-    # 6) 데이터 쌍 구조 검증 및 통계
+    # 6) Fallback passage들을 corpus에 추가 (검증에 포함)
+    # 주의: prec는 이미 로드된 passage 리스트이므로, fallback passage를 추가해야 함
+    if fallback_passages_all:
+        # Fallback passage들을 prec 리스트에 추가 (검증 및 통계에 포함)
+        prec.extend(fallback_passages_all)
+        print(f"[make_pairs] Fallback passage를 검증용 corpus에 추가: {len(fallback_passages_all):,}개")
+    
+    # 7) 데이터 쌍 구조 검증 및 통계
     print("[make_pairs] 데이터 쌍 구조 검증 중...")
     all_passages_dict = {}
-    for p in law + admin + prec:
+    # 법령, 행정규칙, 판례(기존 + fallback) 모두 포함
+    all_passages_list = law + admin + prec
+    for p in all_passages_list:
         pid = p.get("id")
         if pid:
             all_passages_dict[pid] = p
+    
+    # 디버깅: Fallback passage가 실제로 포함되었는지 확인
+    if fallback_passages_all:
+        fallback_ids = {p.get("id") for p in fallback_passages_all if p.get("id")}
+        included_fallback = sum(1 for pid in fallback_ids if pid in all_passages_dict)
+        print(f"[make_pairs]   Fallback passage 포함 확인: {included_fallback:,}/{len(fallback_ids):,}개 포함됨")
     
     validation_stats = validate_pair_structure(rows, all_passages_dict, sample_size=5)
     print_validation_report(validation_stats)
