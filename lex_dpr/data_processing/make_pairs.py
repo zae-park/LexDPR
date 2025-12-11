@@ -422,12 +422,16 @@ def _process_single_precedent_json(
     failure_reason: Optional[Dict[str, int]] = None,
     failure_samples: Optional[List[Dict[str, Any]]] = None,
     enable_fallback: bool = True,
-    fallback_passages: Optional[List[Dict[str, Any]]] = None,
+    all_prec_passages: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    all_prec_passages_pool: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """단일 판례 JSON 파일 처리 (병렬화용 워커 함수)"""
     try:
         with open(fp, "r", encoding="utf-8") as f:
             prec_json = json.load(f)
+        
+        # 이 판례의 chunk passage 가져오기
+        prec_passages = all_prec_passages.get(str(fp), []) if all_prec_passages else []
         
         pair = build_pair_from_precedent_json(
             prec_json,
@@ -440,7 +444,8 @@ def _process_single_precedent_json(
             failure_reason=failure_reason,
             failure_samples=failure_samples,
             enable_fallback=enable_fallback,
-            fallback_passages=fallback_passages,
+            prec_passages=prec_passages,
+            all_prec_passages_pool=all_prec_passages_pool,
         )
         return pair
     except json.JSONDecodeError as e:
@@ -654,7 +659,7 @@ def build_pairs_from_precedent_jsons(
                 print(f"      - {Path(fp).name}: {err_msg}")
             print(f"      ... 외 {len(error_log) - 10}개 파일")
     
-    return rows
+    return rows, fallback_passages
 
 
 # =========================
