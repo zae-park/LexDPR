@@ -356,7 +356,7 @@ def eval_recall_at_k(
 class ValidationLossEvaluator:
     """
     Validation loss를 계산하는 evaluator
-    MultipleNegativesRankingLoss를 사용하여 validation set에 대한 loss를 계산합니다.
+    전체 corpus에서 negative를 샘플링하여 실제 검색 시나리오를 모방합니다.
     """
     
     def __init__(
@@ -368,6 +368,8 @@ class ValidationLossEvaluator:
         temperature: float = 0.05,
         template: TemplateMode = TemplateMode.BGE,
         batch_size: int = 32,
+        use_full_corpus_negatives: bool = True,
+        num_negatives_per_query: int = 1000,  # 각 query당 샘플링할 negative 개수
     ):
         self.model = model
         self.passages = passages
@@ -376,62 +378,119 @@ class ValidationLossEvaluator:
         self.temperature = temperature
         self.template = template
         self.batch_size = batch_size
+        self.use_full_corpus_negatives = use_full_corpus_negatives
+        self.num_negatives_per_query = num_negatives_per_query
         
-        # Loss 함수 생성
-        self.loss_fn = losses.MultipleNegativesRankingLoss(model, scale=temperature)
+        # 전체 corpus 텍스트 준비 (negative 샘플링용)
+        if self.use_full_corpus_negatives:
+            self.corpus_ids = list(passages.keys())
+            self.corpus_texts = [tp(passages[pid]["text"], template) for pid in self.corpus_ids]
+            import random
+            self.negative_indices = list(range(len(self.corpus_ids)))  # negative 샘플링용 인덱스
         
-        # Evaluation 데이터 준비 (텍스트 튜플로 저장하여 DataLoader 호환성 확보)
+        # Evaluation 데이터 준비
         self.eval_examples = []
         for row in read_jsonl_fn(eval_pairs_path):
             q_text = tq(row["query_text"], template)
             pos_ids = [pid for pid in row.get("positive_passages", []) if pid in passages]
             for pid in pos_ids:
                 p_text = tp(passages[pid]["text"], template)
-                # InputExample 대신 텍스트 튜플로 저장 (DataLoader 호환성)
-                self.eval_examples.append((q_text, p_text))
+                self.eval_examples.append((q_text, p_text, pos_ids))  # pos_ids도 함께 저장
     
     def __call__(self, model: SentenceTransformer, output_path: str = None, epoch: int = -1, steps: int = -1) -> Dict[str, float]:
-        """Validation loss 계산"""
+        """Validation loss 계산 - 전체 corpus에서 negative 샘플링 (최적화 버전)"""
         if not self.eval_examples:
             return {"val_loss": 0.0}
         
         model.eval()
         total_loss = 0.0
-        num_batches = 0
+        num_queries = 0
         
-        # 배치로 나누어 처리
-        from torch.utils.data import DataLoader
-        loader = DataLoader(self.eval_examples, batch_size=self.batch_size, shuffle=False)
+        import random
+        import logging
         
         with torch.no_grad():
-            for batch in loader:
-                # batch는 (query_texts, passage_texts) 튜플 리스트
-                # DataLoader가 튜플을 리스트로 변환하므로 직접 사용 가능
-                try:
-                    # 배치에서 텍스트 추출
-                    query_texts = [item[0] for item in batch]
-                    passage_texts = [item[1] for item in batch]
-                    
-                    query_embeddings = model.encode(query_texts, convert_to_tensor=True, normalize_embeddings=True)
-                    passage_embeddings = model.encode(passage_texts, convert_to_tensor=True, normalize_embeddings=True)
-                    
-                    # Loss 계산: MultipleNegativesRankingLoss는 배치 내에서 각 query에 대해 
-                    # positive passage와의 유사도를 높이고, 다른 passage들을 negative로 사용
-                    # Cross-entropy loss 형태로 계산
-                    # scores: [batch_size, batch_size] - 각 query와 각 passage 간의 유사도
-                    scores = torch.mm(query_embeddings, passage_embeddings.t()) / self.temperature
-                    # 각 query에 대해 대각선 원소(positive)가 정답
-                    labels = torch.arange(len(query_texts), device=scores.device)
-                    batch_loss = torch.nn.functional.cross_entropy(scores, labels)
-                    total_loss += batch_loss.item()
-                    num_batches += 1
-                except Exception as e:
-                    # Loss 계산 실패 시 스킵
-                    import logging
-                    logging.warning(f"Validation loss 계산 실패: {e}")
-                    continue
+            if self.use_full_corpus_negatives:
+                # 최적화: 전체 corpus를 한 번만 인코딩하고 재사용
+                # 메모리 절약을 위해 배치로 나누어 인코딩하고 CPU로 옮김
+                logging.info(f"전체 corpus 인코딩 중... (총 {len(self.corpus_texts):,}개 passage)")
+                corpus_embeddings = []
+                
+                # 배치로 나누어 인코딩 (GPU 메모리 절약)
+                for i in range(0, len(self.corpus_texts), self.batch_size):
+                    batch_texts = self.corpus_texts[i:i + self.batch_size]
+                    batch_embs = model.encode(
+                        batch_texts,
+                        batch_size=self.batch_size,
+                        convert_to_tensor=True,
+                        normalize_embeddings=True,
+                        show_progress_bar=False,
+                    )
+                    # CPU로 옮겨서 메모리 절약 (필요시 GPU로 다시 옮김)
+                    corpus_embeddings.append(batch_embs.cpu())
+                
+                # 전체 corpus 임베딩 결합 (CPU에 저장)
+                corpus_embeddings = torch.cat(corpus_embeddings, dim=0)  # [n_corpus, dim]
+                logging.info(f"Corpus 인코딩 완료: {corpus_embeddings.shape}")
+                
+                # 쿼리별로 처리 (이미 인코딩된 corpus 임베딩 재사용)
+                for q_text, p_text, pos_ids in self.eval_examples:
+                    try:
+                        query_emb = model.encode([q_text], convert_to_tensor=True, normalize_embeddings=True)
+                        pos_emb = model.encode([p_text], convert_to_tensor=True, normalize_embeddings=True)
+                        
+                        # 전체 corpus에서 negative 샘플링 (positive 제외)
+                        pos_set = set(pos_ids)
+                        negative_candidates = [
+                            idx for idx in self.negative_indices 
+                            if self.corpus_ids[idx] not in pos_set
+                        ]
+                        
+                        # 샘플링할 negative 개수 결정
+                        num_samples = min(self.num_negatives_per_query, len(negative_candidates))
+                        sampled_indices = random.sample(negative_candidates, num_samples)
+                        
+                        # 이미 인코딩된 negative 임베딩 추출 (CPU → GPU)
+                        neg_embs = corpus_embeddings[sampled_indices].to(query_emb.device)  # [num_negatives, dim]
+                        
+                        # Positive와 negative 결합
+                        all_passage_embs = torch.cat([pos_emb, neg_embs], dim=0)  # [1 + num_negatives, dim]
+                        
+                        # Loss 계산: query와 모든 passage (positive + negatives) 간의 유사도
+                        scores = torch.mm(query_emb, all_passage_embs.t()) / self.temperature  # [1, 1 + num_negatives]
+                        labels = torch.zeros(1, dtype=torch.long, device=scores.device)  # 첫 번째(positive)가 정답
+                        query_loss = torch.nn.functional.cross_entropy(scores, labels)
+                        
+                        total_loss += query_loss.item()
+                        num_queries += 1
+                        
+                    except Exception as e:
+                        logging.warning(f"Validation loss 계산 실패: {e}")
+                        continue
+                
+                # 메모리 정리
+                del corpus_embeddings
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                
+            else:
+                # 기존 방식: 배치 내에서만 negative 사용 (하위 호환성)
+                for q_text, p_text, pos_ids in self.eval_examples:
+                    try:
+                        query_emb = model.encode([q_text], convert_to_tensor=True, normalize_embeddings=True)
+                        pos_emb = model.encode([p_text], convert_to_tensor=True, normalize_embeddings=True)
+                        
+                        scores = torch.mm(query_emb, pos_emb.t()) / self.temperature
+                        labels = torch.zeros(1, dtype=torch.long, device=scores.device)
+                        query_loss = torch.nn.functional.cross_entropy(scores, labels)
+                        
+                        total_loss += query_loss.item()
+                        num_queries += 1
+                        
+                    except Exception as e:
+                        logging.warning(f"Validation loss 계산 실패: {e}")
+                        continue
         
         model.train()
         
-        avg_loss = total_loss / max(1, num_batches)
-        return {"val_loss": avg_loss, "val_cosine_loss": avg_loss}  # cosine_loss도 추가하여 호환성 유지
+        avg_loss = total_loss / max(1, num_queries)
+        return {"val_loss": avg_loss, "val_cosine_loss": avg_loss}
