@@ -203,6 +203,77 @@ def build_query_from_precedent_json(prec_json: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def build_pair_from_precedent_json_fallback(
+    prec_json: Dict[str, Any],
+    hn_per_q: int,
+    chunk_max: int = 1200,
+    chunk_overlap: int = 200,
+    min_len: int = 50,
+) -> Optional[Dict[str, Any]]:
+    """
+    법령 인덱스 매칭 실패 시 판례를 chunk 단위로 처리하여 fallback 쌍 생성.
+    
+    Args:
+        prec_json: 판례 원본 JSON
+        hn_per_q: 질의당 hard negative 개수
+        chunk_max: chunk 최대 길이
+        chunk_overlap: chunk overlap 길이
+        min_len: 최소 passage 길이
+    
+    Returns:
+        판례 passage 기반 쌍 또는 None
+    """
+    # preprocess_prec의 함수를 사용하여 판례를 passage로 변환
+    from ..data_processing.preprocess_prec import prec_to_passages_one
+    
+    # 판례를 passage로 변환
+    prec_passages = prec_to_passages_one(
+        prec_json,
+        min_len=min_len,
+        chunk_max=chunk_max,
+        chunk_overlap=chunk_overlap,
+        prefer_body_first=True,
+    )
+    
+    if not prec_passages:
+        return None
+    
+    # 첫 번째 passage를 positive로 사용
+    first_passage = prec_passages[0]
+    
+    # 질의 생성
+    query_text = build_query_from_precedent_json(prec_json)
+    if not query_text:
+        # fallback: passage 기반 질의 생성
+        query_text = build_query_prec(first_passage)
+    
+    # Positive: 첫 번째 passage
+    positive_ids = [first_passage["id"]]
+    
+    # Hard negative: 같은 판례의 다른 chunk들 (부족하면 빈 리스트)
+    hard_negatives = []
+    other_passages = prec_passages[1:]  # 첫 번째 제외
+    hard_negatives.extend([p["id"] for p in other_passages[:hn_per_q]])
+    
+    case_id = str(prec_json.get("판례일련번호") or prec_json.get("case_id") or "").zfill(6)
+    case_number = prec_json.get("사건번호") or prec_json.get("case_number") or ""
+    court_name = prec_json.get("법원명") or prec_json.get("court_name") or ""
+    
+    return {
+        "query_text": query_text,
+        "positive_passages": positive_ids,
+        "hard_negatives": hard_negatives[:hn_per_q],  # 최대 hn_per_q개
+        "meta": {
+            "type": "prec_fallback",  # fallback으로 생성된 쌍임을 표시
+            "precedent_id": case_id,
+            "case_number": case_number,
+            "court_name": court_name,
+            "fallback_reason": "법령 인덱스 매칭 실패",
+            "num_chunks": len(prec_passages),
+        }
+    }
+
+
 # =========================
 # Hard negative utilities
 # =========================
@@ -338,6 +409,7 @@ def _process_single_precedent_json(
     error_log: Optional[List[Tuple[str, str]]] = None,
     failure_reason: Optional[Dict[str, int]] = None,
     failure_samples: Optional[List[Dict[str, Any]]] = None,
+    enable_fallback: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """단일 판례 JSON 파일 처리 (병렬화용 워커 함수)"""
     try:
@@ -354,6 +426,7 @@ def _process_single_precedent_json(
             hn_per_q=hn_per_q,
             failure_reason=failure_reason,
             failure_samples=failure_samples,
+            enable_fallback=enable_fallback,
         )
         return pair
     except json.JSONDecodeError as e:
@@ -375,6 +448,7 @@ def build_pairs_from_precedent_jsons(
     glob_pattern: str = "**/*.json",
     use_admin: bool = False,
     max_workers: Optional[int] = None,
+    enable_fallback: bool = True,  # 법령 매칭 실패 시 판례 chunk 기반 fallback 활성화
 ) -> List[Dict[str, Any]]:
     """
     판례 원본 JSON 파일들에서 질의-법령/행정규칙 쌍 생성 (새로운 방식).
@@ -442,6 +516,7 @@ def build_pairs_from_precedent_jsons(
                 error_log,  # 에러 로그 전달
                 failure_reason,  # 실패 원인 통계 전달
                 failure_samples,  # 실패 케이스 샘플 전달
+                enable_fallback,  # Fallback 활성화 여부
             ): fp
             for fp in files
         }
@@ -463,7 +538,14 @@ def build_pairs_from_precedent_jsons(
     success_count = len(rows)
     failure_count = total_files - success_count
     
+    # Fallback으로 생성된 쌍 개수 계산
+    fallback_count = sum(1 for r in rows if (r.get("meta") or {}).get("type") == "prec_fallback")
+    law_admin_count = success_count - fallback_count
+    
     print(f"[make_pairs]   성공적으로 처리된 판례: {success_count:,}개 ({success_count/max(1, total_files)*100:.1f}%)")
+    if fallback_count > 0:
+        print(f"[make_pairs]     - 법령/행정규칙 매칭 성공: {law_admin_count:,}개")
+        print(f"[make_pairs]     - Fallback (판례 chunk): {fallback_count:,}개")
     print(f"[make_pairs]   처리 실패한 판례: {failure_count:,}개 ({failure_count/max(1, total_files)*100:.1f}%)")
     
     # 실패 원인 통계 출력
@@ -752,6 +834,7 @@ def build_pair_from_precedent_json(
     hn_per_q: int = 2,
     failure_reason: Optional[Dict[str, int]] = None,
     failure_samples: Optional[List[Dict[str, Any]]] = None,
+    enable_fallback: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
     판례 원본 JSON에서 질의-법령/행정규칙 쌍 생성.
@@ -823,11 +906,19 @@ def build_pair_from_precedent_json(
         if len(positive_ids) >= max_positives:
             break
     
-    # positive passage가 없으면 None 반환
+    # positive passage가 없으면 판례 passage 기반으로 fallback
     if not positive_ids:
         if failure_reason is not None:
             failure_reason["no_matched_passage"] = failure_reason.get("no_matched_passage", 0) + 1
-        return None
+        
+        # Fallback 비활성화 시 None 반환
+        if not enable_fallback:
+            return None
+        
+        # Fallback: 판례를 chunk 단위로 처리하여 prec 쌍 생성
+        return build_pair_from_precedent_json_fallback(prec_json, hn_per_q)
+    
+    # 법령 매칭 성공 시 기존 로직 계속
     
     # 4. Hard negative 샘플링 (법령과 행정규칙 모두 포함)
     all_passages = all_law_passages + all_admin_passages
