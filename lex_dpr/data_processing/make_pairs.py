@@ -57,13 +57,18 @@ def parse_reference_laws(ref_law_text: str) -> List[Dict[str, Any]]:
         sub_article = m.group(3) if m.group(3) else None
         paragraph = m.group(4) if m.group(4) else None
         
-        key = (law_name, article_num, sub_article, paragraph, "law")
+        # 법령명 정규화 (공백 정규화, 괄호 제거)
+        # normalize_law_name 함수는 나중에 정의되므로 여기서 직접 처리
+        law_name_normalized = re.sub(r'\s+', ' ', law_name.strip())
+        law_name_normalized = re.sub(r'\([^)]*\)', '', law_name_normalized).strip()
+        
+        key = (law_name_normalized, article_num, sub_article, paragraph, "law")
         if key in seen:
             continue
         seen.add(key)
         
         refs.append({
-            'law_name': law_name,
+            'law_name': law_name_normalized,  # 정규화된 법령명 사용
             'article_num': article_num,
             'sub_article': sub_article,
             'paragraph': paragraph,
@@ -332,6 +337,7 @@ def _process_single_precedent_json(
     hn_per_q: int,
     error_log: Optional[List[Tuple[str, str]]] = None,
     failure_reason: Optional[Dict[str, int]] = None,
+    failure_samples: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """단일 판례 JSON 파일 처리 (병렬화용 워커 함수)"""
     try:
@@ -347,6 +353,7 @@ def _process_single_precedent_json(
             max_positives=max_positives,
             hn_per_q=hn_per_q,
             failure_reason=failure_reason,
+            failure_samples=failure_samples,
         )
         return pair
     except json.JSONDecodeError as e:
@@ -417,6 +424,7 @@ def build_pairs_from_precedent_jsons(
     rows: List[Dict[str, Any]] = []
     error_log: List[Tuple[str, str]] = []  # 에러 로그 (파일 경로, 에러 메시지)
     failure_reason: Dict[str, int] = {}  # 실패 원인 통계
+    failure_samples: List[Dict[str, Any]] = []  # 실패 케이스 샘플 (법령명 매칭 실패)
     
     # 병렬 처리: ThreadPoolExecutor 사용 (I/O + CPU 혼합 작업)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -433,6 +441,7 @@ def build_pairs_from_precedent_jsons(
                 hn_per_q,
                 error_log,  # 에러 로그 전달
                 failure_reason,  # 실패 원인 통계 전달
+                failure_samples,  # 실패 케이스 샘플 전달
             ): fp
             for fp in files
         }
@@ -468,6 +477,27 @@ def build_pairs_from_precedent_jsons(
                 "no_matched_passage": "법령 인덱스에서 매칭 실패"
             }.get(reason, reason)
             print(f"      - {reason_name}: {count:,}개 ({count/max(1, total_failures)*100:.1f}%)")
+    
+    # 법령명 매칭 실패 샘플 출력
+    if failure_samples:
+        print(f"\n[make_pairs]   법령명 매칭 실패 샘플 (최대 20개):")
+        unique_failures = {}
+        for sample in failure_samples[:100]:  # 최대 100개까지 확인
+            key = (sample.get("original_name", ""), sample.get("article_num", ""))
+            if key not in unique_failures:
+                unique_failures[key] = sample
+        
+        for i, (key, sample) in enumerate(list(unique_failures.items())[:20], 1):
+            print(f"      [{i}] 원본: '{sample.get('original_name', '')}' → 정규화: '{sample.get('normalized_name', '')}'")
+            print(f"          조문: 제{sample.get('article_num', '')}조")
+            print(f"          실패 이유: {sample.get('reason', '알 수 없음')}")
+            if sample.get('available_laws'):
+                print(f"          인덱스에 있는 법령 예시: {sample['available_laws'][:3]}")
+            if sample.get('available_articles'):
+                print(f"          해당 법령의 조문 예시: {sample['available_articles']}")
+        
+        if len(unique_failures) > 20:
+            print(f"      ... 외 {len(unique_failures) - 20}개 실패 케이스")
     
     # 에러 로그 출력
     if error_log:
@@ -541,6 +571,28 @@ def build_admin_index(admin_passages: List[Dict[str, Any]]) -> Dict[str, Dict[st
     
     return index
 
+def normalize_law_name(name: str) -> str:
+    """
+    법령명을 정규화하여 매칭 성공률 향상.
+    
+    정규화 규칙:
+    1. 공백 정규화 (연속 공백 → 단일 공백)
+    2. 괄호 내용 제거 (예: "형법(2023.12.31. 시행)" → "형법")
+    3. 앞뒤 공백 제거
+    """
+    if not name:
+        return ""
+    
+    # 공백 정규화
+    name = re.sub(r'\s+', ' ', name.strip())
+    
+    # 괄호 내용 제거 (예: "형법(2023.12.31. 시행)" → "형법")
+    name = re.sub(r'\([^)]*\)', '', name)
+    name = name.strip()
+    
+    return name
+
+
 def build_law_index(law_passages: List[Dict[str, Any]]) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     """
     법령 passage를 법령명+조문번호로 인덱싱.
@@ -570,6 +622,11 @@ def build_law_index(law_passages: List[Dict[str, Any]]) -> Dict[str, Dict[str, L
         if not law_name or not article:
             continue
         
+        # 법령명 정규화
+        normalized_name = normalize_law_name(law_name)
+        if not normalized_name:
+            continue
+        
         # article에서 조문번호 추출: "제355조" → "355", "제355조의2" → "355"
         article_match = re.search(r'제\s*([0-9]+)\s*조', article)
         if not article_match:
@@ -577,13 +634,13 @@ def build_law_index(law_passages: List[Dict[str, Any]]) -> Dict[str, Dict[str, L
         
         article_num = article_match.group(1)
         
-        # 인덱스 구조 생성
-        if law_name not in index:
-            index[law_name] = {}
-        if article_num not in index[law_name]:
-            index[law_name][article_num] = []
+        # 인덱스 구조 생성 (정규화된 법령명 사용)
+        if normalized_name not in index:
+            index[normalized_name] = {}
+        if article_num not in index[normalized_name]:
+            index[normalized_name][article_num] = []
         
-        index[law_name][article_num].append(lp)
+        index[normalized_name][article_num].append(lp)
     
     return index
 
@@ -593,9 +650,10 @@ def find_law_passages(
     article_num: str,
     sub_article: Optional[str] = None,
     paragraph: Optional[str] = None,
+    failure_samples: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    인덱스에서 법령 passage 검색.
+    인덱스에서 법령 passage 검색 (법령명 정규화 적용).
     
     Args:
         index: build_law_index()로 생성한 인덱스
@@ -603,18 +661,42 @@ def find_law_passages(
         article_num: 조문번호 (문자열)
         sub_article: 의조번호 (선택, 현재는 무시)
         paragraph: 항번호 (선택, 현재는 무시)
+        failure_samples: 실패 케이스 샘플 수집용 리스트 (선택)
     
     Returns:
         매칭된 passage 리스트
     """
-    if law_name not in index:
+    # 법령명 정규화
+    normalized_name = normalize_law_name(law_name)
+    
+    # 정규화된 법령명으로 검색
+    if normalized_name not in index:
+        # 실패 케이스 샘플 수집
+        if failure_samples is not None and len(failure_samples) < 100:
+            failure_samples.append({
+                "original_name": law_name,
+                "normalized_name": normalized_name,
+                "article_num": article_num,
+                "reason": "법령명 불일치",
+                "available_laws": list(index.keys())[:5] if index else [],  # 샘플만
+            })
         return []
     
-    if article_num not in index[law_name]:
+    if article_num not in index[normalized_name]:
+        # 실패 케이스 샘플 수집
+        if failure_samples is not None and len(failure_samples) < 100:
+            available_articles = list(index[normalized_name].keys())[:5] if normalized_name in index else []
+            failure_samples.append({
+                "original_name": law_name,
+                "normalized_name": normalized_name,
+                "article_num": article_num,
+                "reason": "조문번호 불일치",
+                "available_articles": available_articles,
+            })
         return []
     
     # 현재는 조문번호만으로 매칭 (항번호, 의조번호는 나중에 정밀화 가능)
-    passages = index[law_name][article_num]
+    passages = index[normalized_name][article_num]
     
     # 항번호가 지정된 경우 필터링 (선택적)
     if paragraph:
@@ -669,6 +751,7 @@ def build_pair_from_precedent_json(
     max_positives: int = 5,
     hn_per_q: int = 2,
     failure_reason: Optional[Dict[str, int]] = None,
+    failure_samples: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     판례 원본 JSON에서 질의-법령/행정규칙 쌍 생성.
@@ -721,7 +804,7 @@ def build_pair_from_precedent_json(
         
         passages = []
         if ref_type == "law":
-            passages = find_law_passages(law_index, name, article_num, sub_article, paragraph)
+            passages = find_law_passages(law_index, name, article_num, sub_article, paragraph, failure_samples=failure_samples)
             law_refs.append(ref)
         elif ref_type == "admin":
             passages = find_admin_passages(admin_index, name, article_num, sub_article, paragraph)
