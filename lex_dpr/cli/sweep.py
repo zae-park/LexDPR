@@ -627,7 +627,7 @@ entity: zae-park  # WandB 엔티티 (선택사항, 없으면 현재 로그인한
 
 # 시간 제한 설정 (기본값: 새벽 23시~8시 KST)
 # 여러 날짜에 나눠서 실행할 때 사용
-time_window: "23-12"  # 23시~8시에만 실행 (KST 기준)
+time_window: "17-7"  # 17시~7시에만 실행 (KST 기준)
 timezone: "Asia/Seoul"
 """
 
