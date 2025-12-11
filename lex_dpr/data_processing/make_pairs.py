@@ -331,6 +331,7 @@ def _process_single_precedent_json(
     max_positives: int,
     hn_per_q: int,
     error_log: Optional[List[Tuple[str, str]]] = None,
+    failure_reason: Optional[Dict[str, int]] = None,
 ) -> Optional[Dict[str, Any]]:
     """단일 판례 JSON 파일 처리 (병렬화용 워커 함수)"""
     try:
@@ -345,6 +346,7 @@ def _process_single_precedent_json(
             admin_passages,
             max_positives=max_positives,
             hn_per_q=hn_per_q,
+            failure_reason=failure_reason,
         )
         return pair
     except json.JSONDecodeError as e:
@@ -414,6 +416,7 @@ def build_pairs_from_precedent_jsons(
     
     rows: List[Dict[str, Any]] = []
     error_log: List[Tuple[str, str]] = []  # 에러 로그 (파일 경로, 에러 메시지)
+    failure_reason: Dict[str, int] = {}  # 실패 원인 통계
     
     # 병렬 처리: ThreadPoolExecutor 사용 (I/O + CPU 혼합 작업)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -429,6 +432,7 @@ def build_pairs_from_precedent_jsons(
                 max_positives,
                 hn_per_q,
                 error_log,  # 에러 로그 전달
+                failure_reason,  # 실패 원인 통계 전달
             ): fp
             for fp in files
         }
@@ -445,9 +449,29 @@ def build_pairs_from_precedent_jsons(
                 except Exception as e:
                     error_log.append((str(fp), f"예외 발생: {str(e)}"))
     
+    # 통계 출력
+    total_files = len(files)
+    success_count = len(rows)
+    failure_count = total_files - success_count
+    
+    print(f"[make_pairs]   성공적으로 처리된 판례: {success_count:,}개 ({success_count/max(1, total_files)*100:.1f}%)")
+    print(f"[make_pairs]   처리 실패한 판례: {failure_count:,}개 ({failure_count/max(1, total_files)*100:.1f}%)")
+    
+    # 실패 원인 통계 출력
+    if failure_reason:
+        print(f"[make_pairs]   실패 원인 분석:")
+        total_failures = sum(failure_reason.values())
+        for reason, count in sorted(failure_reason.items(), key=lambda x: x[1], reverse=True):
+            reason_name = {
+                "no_query": "질의 생성 실패 (판시사항/판결요지/사건명 없음)",
+                "no_ref_law": "참조조문 없음",
+                "no_matched_passage": "법령 인덱스에서 매칭 실패"
+            }.get(reason, reason)
+            print(f"      - {reason_name}: {count:,}개 ({count/max(1, total_failures)*100:.1f}%)")
+    
     # 에러 로그 출력
     if error_log:
-        print(f"[make_pairs]   경고: {len(error_log):,}개 파일 처리 실패")
+        print(f"[make_pairs]   경고: {len(error_log):,}개 파일에서 예외 발생")
         if len(error_log) <= 10:
             for fp, err_msg in error_log:
                 print(f"      - {Path(fp).name}: {err_msg}")
@@ -455,8 +479,6 @@ def build_pairs_from_precedent_jsons(
             for fp, err_msg in error_log[:10]:
                 print(f"      - {Path(fp).name}: {err_msg}")
             print(f"      ... 외 {len(error_log) - 10}개 파일")
-    
-    print(f"[make_pairs]   성공적으로 처리된 판례: {len(rows):,}개 ({len(rows)/max(1, len(files))*100:.1f}%)")
     
     return rows
 
@@ -646,6 +668,7 @@ def build_pair_from_precedent_json(
     all_admin_passages: List[Dict[str, Any]],
     max_positives: int = 5,
     hn_per_q: int = 2,
+    failure_reason: Optional[Dict[str, int]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     판례 원본 JSON에서 질의-법령/행정규칙 쌍 생성.
@@ -670,6 +693,8 @@ def build_pair_from_precedent_json(
     # 1. 질의 생성
     query_text = build_query_from_precedent_json(prec_json)
     if not query_text:
+        if failure_reason is not None:
+            failure_reason["no_query"] = failure_reason.get("no_query", 0) + 1
         return None
     
     # 2. 참조조문 파싱 (법령 + 행정규칙)
@@ -677,6 +702,8 @@ def build_pair_from_precedent_json(
     refs = parse_reference_laws(ref_law_text)
     
     if not refs:
+        if failure_reason is not None:
+            failure_reason["no_ref_law"] = failure_reason.get("no_ref_law", 0) + 1
         return None
     
     # 3. 법령/행정규칙 인덱스에서 passage 검색
@@ -715,6 +742,8 @@ def build_pair_from_precedent_json(
     
     # positive passage가 없으면 None 반환
     if not positive_ids:
+        if failure_reason is not None:
+            failure_reason["no_matched_passage"] = failure_reason.get("no_matched_passage", 0) + 1
         return None
     
     # 4. Hard negative 샘플링 (법령과 행정규칙 모두 포함)
@@ -1075,18 +1104,144 @@ def make_pairs(
     """
     질의-passage 쌍 생성.
     
+    이 함수는 법령, 행정규칙, 판례 데이터로부터 학습용 질의-passage 쌍을 생성합니다.
+    생성된 쌍은 Train/Valid/Test로 자동 분할되어 저장됩니다.
+    
     Args:
-        law_path: 법령 passage JSONL 경로
-        admin_path: 행정규칙 passage JSONL 경로
-        prec_path: 판례 passage JSONL 경로 (기존 방식)
-        prec_json_dir: 판례 원본 JSON 디렉토리 (새로운 방식, prec_path보다 우선)
-        out_path: 출력 JSONL 경로
-        hn_per_q: 질의당 hard negative 개수
-        seed: 랜덤 시드
-        enable_cross_positive: 판례→법령 cross positive 활성화
-        max_positives_per_prec: 판례당 최대 positive passage 개수
-        prec_json_glob: 판례 JSON 파일 검색 패턴
-        use_admin_for_prec: 판례→법령/행정규칙 쌍 생성 시 행정규칙 사용 여부 (기본값: False)
+        law_path (Optional[str]):
+            법령 passage JSONL 파일 경로.
+            예: "data/processed/law_passages.jsonl"
+            - 각 passage는 {"id": "LAW_xxx_제n조", "text": "...", ...} 형태
+            - None이면 법령 기반 쌍을 생성하지 않음
+            
+        admin_path (Optional[str]):
+            행정규칙 passage JSONL 파일 경로.
+            예: "data/processed/admin_passages.jsonl"
+            - 각 passage는 {"id": "ADM_xxx_제n조", "text": "...", ...} 형태
+            - None이면 행정규칙 기반 쌍을 생성하지 않음
+            
+        prec_path (Optional[str]):
+            판례 passage JSONL 파일 경로 (기존 방식).
+            예: "data/processed/prec_passages.jsonl"
+            - 각 passage는 {"id": "PREC_xxx_1", "text": "...", ...} 형태
+            - prec_json_dir이 지정되면 무시됨 (prec_json_dir 우선)
+            - None이면 판례 passage 기반 쌍을 생성하지 않음
+            
+        prec_json_dir (Optional[str]):
+            판례 원본 JSON 파일들이 있는 디렉토리 경로 (새로운 방식, 권장).
+            예: "data/precedents"
+            - 이 디렉토리 내의 JSON 파일들을 재귀적으로 검색
+            - 각 JSON 파일은 판례 원본 데이터 (판시사항, 판결요지, 참조조문 등 포함)
+            - prec_path보다 우선순위가 높음 (둘 다 지정되면 이 방식 사용)
+            - None이면 판례 원본 JSON 기반 쌍을 생성하지 않음
+            
+        out_path (str):
+            출력 JSONL 파일 경로 (Train 세트).
+            예: "data/processed/pairs_train.jsonl"
+            - Valid/Test 세트는 자동으로 생성됨:
+              - Train: {out_path}
+              - Valid: {out_path}_valid.jsonl
+              - Test: {out_path}_test.jsonl
+            - 분할 비율: Train 80%, Valid 10%, Test 10%
+            
+        hn_per_q (int, default=2):
+            질의당 Hard Negative 개수.
+            - 각 질의에 대해 몇 개의 hard negative를 샘플링할지 결정
+            - Hard Negative 샘플링 전략:
+              * 법령/행정규칙: 같은 법령/규칙의 다른 조문에서 우선 샘플링
+              * 판례: 같은 법원의 다른 판례에서 샘플링
+            - 권장값: 2~5 (너무 많으면 학습이 어려워질 수 있음)
+            
+        seed (int, default=42):
+            랜덤 시드.
+            - Hard Negative 샘플링 및 데이터 셔플링에 사용
+            - 재현 가능한 결과를 위해 동일한 시드 사용 권장
+            
+        enable_cross_positive (bool, default=True):
+            판례→법령 Cross Positive 활성화 여부.
+            - True: 판례 passage 기반 쌍에서 본문에 인용된 법령을 추가 positive로 연결
+            - 예: 판례 본문에 "형법 제355조"가 언급되면 해당 법령 passage를 positive에 추가
+            - 최대 2개까지 추가
+            - 판례 원본 JSON 방식에서는 이미 참조조문을 사용하므로 효과가 제한적
+            
+        max_positives_per_prec (int, default=5):
+            판례당 최대 Positive Passage 개수 (판례 원본 JSON 방식에서만 사용).
+            - 판례의 참조조문에서 파싱한 법령/행정규칙 passage 개수 제한
+            - 참조조문이 많아도 이 개수만큼만 positive로 사용
+            - 권장값: 3~10 (너무 많으면 학습이 어려워질 수 있음)
+            
+        prec_json_glob (str, default="**/*.json"):
+            판례 JSON 파일 검색 패턴 (glob 패턴).
+            - prec_json_dir 내에서 어떤 파일을 검색할지 결정
+            - 예: "**/*.json" (모든 하위 디렉토리의 JSON 파일)
+            - 예: "*.json" (현재 디렉토리의 JSON 파일만)
+            - 예: "**/prec_*.json" (prec_로 시작하는 파일만)
+            
+        use_admin_for_prec (bool, default=False):
+            판례→법령/행정규칙 쌍 생성 시 행정규칙 사용 여부.
+            - True: 판례의 참조조문에서 법령과 행정규칙 모두 사용
+            - False: 법령만 사용 (기본값)
+            - admin_path가 None이면 무시됨
+            
+        max_workers (Optional[int], default=None):
+            병렬 처리 워커 수 (판례 원본 JSON 처리 시).
+            - None이면 CPU 코어 수만큼 자동 설정
+            - 판례 JSON 파일이 많을 때 처리 속도 향상
+            - I/O 집약적 작업이므로 CPU 코어 수보다 많게 설정해도 무방
+            
+    Returns:
+        None (결과는 파일로 저장됨)
+        
+    출력 파일:
+        - {out_path}: Train 세트 (80%)
+        - {out_path}_valid.jsonl: Valid 세트 (10%)
+        - {out_path}_test.jsonl: Test 세트 (10%)
+        
+    생성되는 쌍 타입:
+        1. law: 법령 기반 쌍
+           - 질의: "법령명 제n조의 내용은 무엇인가?"
+           - Positive: 해당 법령 passage
+           
+        2. admin: 행정규칙 기반 쌍
+           - 질의: "규칙명 제n조의 내용은 무엇인가?"
+           - Positive: 해당 행정규칙 passage
+           
+        3. prec (기존 방식): 판례 passage 기반 쌍
+           - 질의: "사건명의 요지는 무엇인가?"
+           - Positive: 해당 판례 passage
+           
+        4. prec_to_law_admin (새로운 방식, 권장): 판례 원본 JSON 기반 쌍
+           - 질의: "판시사항에 대한 법적 판단은?" (판시사항 기반)
+           - Positive: 참조조문에서 파싱한 법령/행정규칙 passage들 (최대 max_positives_per_prec개)
+           
+    사용 예시:
+        # 기본 사용 (법령 + 판례 원본 JSON)
+        make_pairs(
+            law_path="data/processed/law_passages.jsonl",
+            prec_json_dir="data/precedents",
+            out_path="data/processed/pairs_train.jsonl",
+            hn_per_q=2,
+            max_positives_per_prec=5
+        )
+        
+        # 모든 타입 포함
+        make_pairs(
+            law_path="data/processed/law_passages.jsonl",
+            admin_path="data/processed/admin_passages.jsonl",
+            prec_json_dir="data/precedents",
+            out_path="data/processed/pairs_train.jsonl",
+            use_admin_for_prec=True,
+            hn_per_q=3,
+            max_positives_per_prec=5
+        )
+        
+        # 기존 방식 (판례 passage 사용)
+        make_pairs(
+            law_path="data/processed/law_passages.jsonl",
+            prec_path="data/processed/prec_passages.jsonl",
+            out_path="data/processed/pairs_train.jsonl",
+            enable_cross_positive=True
+        )
     """
     t0 = time.time()
     random.seed(seed)
@@ -1262,18 +1417,117 @@ def make_pairs(
 # CLI
 # =========================
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--law", required=False, help="law_passages.jsonl")
-    ap.add_argument("--admin", required=False, help="admin_passages.jsonl")
-    ap.add_argument("--prec", required=False, help="prec_passages.jsonl (기존 방식)")
-    ap.add_argument("--prec-json-dir", required=False, help="판례 원본 JSON 디렉토리 (새로운 방식, --prec보다 우선)")
-    ap.add_argument("--prec-json-glob", default="**/*.json", help="판례 JSON 파일 검색 패턴")
-    ap.add_argument("--out", required=True, help="pairs_train.jsonl")
-    ap.add_argument("--hn_per_q", type=int, default=2)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--max-positives-per-prec", type=int, default=5, help="판례당 최대 positive passage 개수")
-    ap.add_argument("--no_cross", action="store_true", help="disable prec→law cross positives")
-    ap.add_argument("--use-admin-for-prec", action="store_true", help="판례→법령/행정규칙 쌍 생성 시 행정규칙도 사용 (기본값: 법령만 사용)")
+    ap = argparse.ArgumentParser(
+        description="질의-passage 쌍 생성 도구",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+사용 예시:
+  # 기본 사용 (법령 + 판례 원본 JSON)
+  python -m lex_dpr.data_processing.make_pairs \\
+    --law data/processed/law_passages.jsonl \\
+    --prec-json-dir data/precedents \\
+    --out data/processed/pairs_train.jsonl
+
+  # 모든 타입 포함
+  python -m lex_dpr.data_processing.make_pairs \\
+    --law data/processed/law_passages.jsonl \\
+    --admin data/processed/admin_passages.jsonl \\
+    --prec-json-dir data/precedents \\
+    --out data/processed/pairs_train.jsonl \\
+    --use-admin-for-prec \\
+    --hn_per_q 3 \\
+    --max-positives-per-prec 5
+
+  # 기존 방식 (판례 passage 사용)
+  python -m lex_dpr.data_processing.make_pairs \\
+    --law data/processed/law_passages.jsonl \\
+    --prec data/processed/prec_passages.jsonl \\
+    --out data/processed/pairs_train.jsonl
+        """
+    )
+    
+    # 입력 파일 경로
+    ap.add_argument(
+        "--law",
+        required=False,
+        help="법령 passage JSONL 파일 경로 (예: data/processed/law_passages.jsonl)"
+    )
+    ap.add_argument(
+        "--admin",
+        required=False,
+        help="행정규칙 passage JSONL 파일 경로 (예: data/processed/admin_passages.jsonl)"
+    )
+    ap.add_argument(
+        "--prec",
+        required=False,
+        help="판례 passage JSONL 파일 경로 (기존 방식, 예: data/processed/prec_passages.jsonl). "
+             "--prec-json-dir이 지정되면 무시됨"
+    )
+    ap.add_argument(
+        "--prec-json-dir",
+        required=False,
+        help="판례 원본 JSON 파일들이 있는 디렉토리 경로 (새로운 방식, 권장). "
+             "예: data/precedents. --prec보다 우선순위가 높음"
+    )
+    ap.add_argument(
+        "--prec-json-glob",
+        default="**/*.json",
+        help="판례 JSON 파일 검색 패턴 (glob 패턴, 기본값: **/*.json). "
+             "예: '*.json' (현재 디렉토리만), '**/prec_*.json' (prec_로 시작하는 파일만)"
+    )
+    
+    # 출력 경로
+    ap.add_argument(
+        "--out",
+        required=True,
+        help="출력 JSONL 파일 경로 (Train 세트). "
+             "Valid/Test 세트는 자동으로 생성됨: {out_path}_valid.jsonl, {out_path}_test.jsonl"
+    )
+    
+    # 하이퍼파라미터
+    ap.add_argument(
+        "--hn_per_q",
+        type=int,
+        default=2,
+        help="질의당 Hard Negative 개수 (기본값: 2). "
+             "권장값: 2~5. 너무 많으면 학습이 어려워질 수 있음"
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="랜덤 시드 (기본값: 42). 재현 가능한 결과를 위해 동일한 시드 사용 권장"
+    )
+    ap.add_argument(
+        "--max-positives-per-prec",
+        type=int,
+        default=5,
+        help="판례당 최대 Positive Passage 개수 (판례 원본 JSON 방식에서만 사용, 기본값: 5). "
+             "판례의 참조조문에서 파싱한 법령/행정규칙 passage 개수 제한. 권장값: 3~10"
+    )
+    
+    # 옵션
+    ap.add_argument(
+        "--no_cross",
+        action="store_true",
+        help="판례→법령 Cross Positive 비활성화. "
+             "기본적으로 판례 본문에 인용된 법령을 추가 positive로 연결하지만, "
+             "이 옵션으로 비활성화 가능"
+    )
+    ap.add_argument(
+        "--use-admin-for-prec",
+        action="store_true",
+        help="판례→법령/행정규칙 쌍 생성 시 행정규칙도 사용 (기본값: False, 법령만 사용). "
+             "--admin이 지정되어 있어야 함"
+    )
+    ap.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="병렬 처리 워커 수 (판례 원본 JSON 처리 시, 기본값: CPU 코어 수). "
+             "판례 JSON 파일이 많을 때 처리 속도 향상"
+    )
+    
     args = ap.parse_args()
 
     make_pairs(
@@ -1288,6 +1542,7 @@ def main():
         max_positives_per_prec=args.max_positives_per_prec,
         prec_json_glob=args.prec_json_glob,
         use_admin_for_prec=getattr(args, 'use_admin_for_prec', False),
+        max_workers=getattr(args, 'max_workers', None),
     )
 
 if __name__ == "__main__":
