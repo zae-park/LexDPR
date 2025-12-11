@@ -1144,6 +1144,8 @@ def _run_agent_impl(
                 pass
     
     # WandB 에이전트 실행
+    # count가 지정된 경우 전체 실행 횟수를 추적
+    run_count = 0
     try:
         while True:
             if time_window:
@@ -1190,8 +1192,12 @@ def _run_agent_impl(
             # wandb.agent() 호출
             # sweep_id 형식: entity/project/sweep_id 또는 project/sweep_id
             # project와 entity를 명시하면 더 정확하게 sweep을 찾을 수 있음
+            # time_window가 설정된 경우, 각 run 시작 전에 시간을 체크하기 위해 count=1로 설정
+            # 이렇게 하면 각 run이 끝난 후 time_window를 체크할 수 있음
+            agent_count = 1 if time_window else count  # time_window가 있으면 한 번에 하나씩만 실행
+            
             try:
-                wandb.agent(sweep_id, function=train_fn, count=count, **agent_kwargs)
+                wandb.agent(sweep_id, function=train_fn, count=agent_count, **agent_kwargs)
             except Exception as e:
                 logger.error(f"WandB Agent 실행 실패: {e}")
                 logger.error("")
@@ -1207,8 +1213,7 @@ def _run_agent_impl(
                 raise
             
             # wandb.agent()가 완료된 후 시간 체크
-            # wandb.agent()는 블로킹 호출이므로, 실행 중인 run이 끝날 때까지 기다림
-            # 따라서 time_window 체크는 run이 끝난 후에만 가능함
+            # time_window가 설정된 경우, 각 run이 끝난 후 time_window를 체크하여 다음 run 시작 여부 결정
             if time_window:
                 in_window, next_start_time = _check_time_window(time_window, timezone)
                 if not in_window:
@@ -1236,11 +1241,19 @@ def _run_agent_impl(
                         logger.info(f"다음 시작 시간까지 대기합니다: {next_start_time.strftime('%Y-%m-%d %H:%M:%S')} ({int(wait_seconds // 60)}분 후)")
                         time.sleep(wait_seconds + 5)  # 5초 여유
                         continue  # 다시 시간 체크 후 계속
+                    else:
+                        # next_start_time이 None이면 시간 제한 없이 계속 실행
+                        logger.warning("다음 시작 시간을 계산할 수 없습니다. 계속 실행합니다.")
             
-            if count is not None:  # count가 지정된 경우, 한 번 실행 후 종료
-                break
-            # count가 None인 경우, 시간 제한이 없으면 무한 루프 방지
-            if not time_window:
+            # count가 지정된 경우 처리
+            if count is not None:
+                run_count += 1
+                if run_count >= count:
+                    logger.info(f"지정된 실행 횟수({count})에 도달했습니다. 종료합니다.")
+                    break
+            
+            # count가 None이고 time_window도 없는 경우, 한 번만 실행하고 종료
+            if count is None and not time_window:
                 break  # count가 없고 시간 제한도 없으면 한 번만 실행하고 종료 (기존 동작 유지)
     except KeyboardInterrupt:
         logger.info("")
