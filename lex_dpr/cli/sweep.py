@@ -491,7 +491,7 @@ initial_runs: 10
 
 # 최적화할 메트릭
 metric:
-  name: eval/ndcg_at_10  # WandB에 로깅되는 메트릭 이름 (@는 _at_로 변환됨)
+  name: eval/recall_at_10  # WandB에 로깅되는 메트릭 이름 (@는 _at_로 변환됨)
   goal: maximize       # maximize 또는 minimize
 
 # Early termination 설정 (Bayesian search에서 수렴 시 자동 종료)
@@ -499,8 +499,8 @@ metric:
 # epochs=50, eval_steps=300이면 대략 50번의 평가가 가능하므로 max_iter를 충분히 크게 설정
 early_terminate:
   type: hyperband
-  min_iter: 10  # 최소 5번 평가 후 종료 판단 (너무 일찍 종료 방지)
-  max_iter: 5000  # 최대 50번 평가 후 종료 (epochs=50에 맞춤)
+  min_iter: 30  # 최소 30번 평가 후 종료 판단 (너무 일찍 종료 방지)
+  max_iter: 5000  # 최대 평가 수 크게 설정
   s: 2  # Successive halving factor
 
 # 탐색할 하이퍼파라미터 (넉넉한 범위)
@@ -545,11 +545,11 @@ parameters:
   
   # LoRA rank (integer, categorical 유지)
   model.peft.r:
-    values: [8, 16, 32, 64]
+    values: [4, 8, 16, 32, 64]
   
   # LoRA alpha (integer, categorical 유지)
   model.peft.alpha:
-    values: [16, 32, 64, 128]
+    values: [8, 16, 32, 64, 128]
   
   # LoRA dropout (넉넉한 범위, continuous)
   model.peft.dropout:
@@ -587,7 +587,7 @@ parameters:
   # Validation loss 계산 시 각 query당 샘플링할 negative 개수
   # 작은 값(64)은 빠른 평가, 큰 값(1024)은 더 정확한 평가
   trainer.num_negatives_per_query:
-    values: [64, 256, 512, 1024]  # 전체 corpus에서 샘플링할 negative 개수 (메모리와 정확도 트레이드오프)
+    values: [16, 32, 64, 128]  # 전체 corpus에서 샘플링할 negative 개수 (메모리와 정확도 트레이드오프)
   
   # 기본 모델 (categorical)
   model.bi_model:
@@ -601,15 +601,15 @@ parameters:
 # 고정 파라미터 (모든 스윕 실행에서 동일하게 사용)
 fixed:
   # 학습 설정
-  trainer.epochs: 50  # 넉넉한 에포크 수 (실제 학습에서는 충분한 에포크 필요)
+  trainer.epochs: 200  # 넉넉한 에포크 수 (실제 학습에서는 충분한 에포크 필요)
   trainer.eval_steps: 300  # 평가 주기
   trainer.k: 20  # 평가 시 top-k
   trainer.k_values: [1, 3, 5, 10, 20]  # 평가 메트릭 k 값들
   
   # Early Stopping 설정 (학습 효율성)
   trainer.early_stopping.enabled: true
-  trainer.early_stopping.metric: "cosine_ndcg@10"
-  trainer.early_stopping.patience: 30
+  trainer.early_stopping.metric: "cosine_recall@10"
+  trainer.early_stopping.patience: 20
   trainer.early_stopping.min_delta: 0.001
   trainer.early_stopping.mode: "max"
   trainer.early_stopping.restore_best_weights: true
