@@ -1164,6 +1164,11 @@ def _run_agent_impl(
                         import gc
                         if torch is not None and torch.cuda.is_available():
                             # 모든 GPU에서 강력한 메모리 정리
+                            # 먼저 Python GC로 객체 정리 (모델 참조 제거)
+                            gc.collect()
+                            gc.collect()  # 추가 GC (순환 참조 정리)
+                            
+                            # 그 다음 PyTorch 캐시 정리
                             torch.cuda.empty_cache()
                             torch.cuda.synchronize()
                             # 추가 정리: 모든 GPU 디바이스 확인
@@ -1171,9 +1176,8 @@ def _run_agent_impl(
                                 with torch.cuda.device(i):
                                     torch.cuda.empty_cache()
                                     torch.cuda.ipc_collect()  # IPC 메모리 정리
-                            # Python GC로 남은 객체 정리
-                            gc.collect()
-                            # 추가 GC (순환 참조 정리)
+                            
+                            # 최종 GC (정리 후 남은 객체)
                             gc.collect()
                             logger.debug("Run 종료 후 GPU 메모리 정리 완료 (time_window 내)")
                     except ImportError:

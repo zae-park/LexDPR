@@ -650,6 +650,19 @@ class BiEncoderTrainer:
             import gc
             try:
                 if torch.cuda.is_available():
+                    # 모델을 CPU로 이동하여 GPU 메모리에서 제거
+                    try:
+                        if hasattr(self, 'model') and self.model is not None:
+                            # 모델을 CPU로 이동
+                            self.model.to('cpu')
+                            logger.debug("모델을 CPU로 이동 완료")
+                        if hasattr(self, 'encoder') and self.encoder is not None:
+                            if hasattr(self.encoder, 'model') and self.encoder.model is not None:
+                                self.encoder.model.to('cpu')
+                                logger.debug("Encoder 모델을 CPU로 이동 완료")
+                    except Exception as e:
+                        logger.debug(f"모델 CPU 이동 중 오류 (무시됨): {e}")
+                    
                     # 강력한 메모리 정리
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
@@ -658,6 +671,7 @@ class BiEncoderTrainer:
                         with torch.cuda.device(i):
                             torch.cuda.empty_cache()
                             torch.cuda.ipc_collect()  # IPC 메모리 정리
+                    
                     # Python GC로 남은 객체 정리
                     gc.collect()
                     gc.collect()  # 추가 GC (순환 참조 정리)
