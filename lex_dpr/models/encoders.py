@@ -8,13 +8,17 @@ from .templates import TemplateMode, tq, tp
 class BiEncoder:
     def __init__(self, name_or_path: str, template: TemplateMode = TemplateMode.BGE,
                  normalize: bool = True, max_seq_length: Optional[int] = None,
+                 query_max_seq_length: Optional[int] = None,
+                 passage_max_seq_length: Optional[int] = None,
                  trust_remote_code: bool = True, peft_adapter_path: Optional[str] = None):
         """
         Args:
             name_or_path: 모델 경로 또는 HuggingFace 모델 이름
             template: 템플릿 모드
             normalize: 임베딩 정규화 여부
-            max_seq_length: 최대 시퀀스 길이
+            max_seq_length: 최대 시퀀스 길이 (쿼리/패시지 공통, query_max_seq_length/passage_max_seq_length가 없을 때 사용)
+            query_max_seq_length: 쿼리 최대 시퀀스 길이 (우선순위: query_max_seq_length > max_seq_length)
+            passage_max_seq_length: 패시지 최대 시퀀스 길이 (우선순위: passage_max_seq_length > max_seq_length)
             trust_remote_code: 원격 코드 신뢰 여부
             peft_adapter_path: PEFT 어댑터 경로 (None이면 자동 감지)
         """
@@ -63,9 +67,56 @@ class BiEncoder:
             # 일반 모델 로드
             self.model = SentenceTransformer(name_or_path, trust_remote_code=trust_remote_code)
         
+        # 모델의 원래 max_seq_length 확인 (토크나이저의 model_max_length)
+        original_model_max_length = getattr(self.model.tokenizer, 'model_max_length', None)
+        if original_model_max_length is None:
+            # SentenceTransformer 내부 토크나이저 접근
+            try:
+                if hasattr(self.model, '_modules'):
+                    for module in self.model._modules.values():
+                        if hasattr(module, 'tokenizer'):
+                            original_model_max_length = getattr(module.tokenizer, 'model_max_length', 512)
+                            break
+            except:
+                pass
+        if original_model_max_length is None:
+            original_model_max_length = 512  # 기본값
+        
+        # 시퀀스 길이 설정 (쿼리/패시지 분리 지원)
+        # 기본값: max_seq_length를 사용하되, query/passage 별도 설정이 있으면 우선 사용
+        self.query_max_seq_length = query_max_seq_length if query_max_seq_length is not None else max_seq_length
+        self.passage_max_seq_length = passage_max_seq_length if passage_max_seq_length is not None else max_seq_length
+        
+        # 모델의 기본 max_seq_length 설정 (더 큰 값으로 설정하여 유연성 확보)
         if max_seq_length:
-            # Sentence-Transformers가 내부 tokenizer 길이를 이 값으로 사용
             self.model.max_seq_length = int(max_seq_length)
+        elif query_max_seq_length or passage_max_seq_length:
+            # query/passage 중 더 큰 값으로 설정
+            max_len = max(
+                self.query_max_seq_length or 512,
+                self.passage_max_seq_length or 512
+            )
+            self.model.max_seq_length = int(max_len)
+        else:
+            # 설정이 없으면 모델의 원래 길이 사용
+            self.model.max_seq_length = int(original_model_max_length)
+        
+        # 경고: 설정한 길이가 원래 모델 길이와 다를 때
+        final_max_len = self.model.max_seq_length
+        if final_max_len > original_model_max_length:
+            print(f"⚠️  경고: 설정한 max_seq_length({final_max_len})가 모델의 원래 길이({original_model_max_length})보다 깁니다.")
+            print(f"   더 긴 시퀀스는 position embeddings가 부족할 수 있어 성능 저하가 발생할 수 있습니다.")
+            print(f"   권장: {original_model_max_length} 이하로 설정하거나, 모델이 더 긴 길이를 지원하는지 확인하세요.")
+        elif final_max_len < original_model_max_length:
+            print(f"ℹ️  정보: 설정한 max_seq_length({final_max_len})가 모델의 원래 길이({original_model_max_length})보다 짧습니다.")
+            print(f"   더 긴 입력은 자동으로 잘립니다(truncation). 이는 일반적으로 문제없습니다.")
+        
+        # Query/Passage 분리 설정 시 경고
+        if query_max_seq_length or passage_max_seq_length:
+            if self.query_max_seq_length and self.query_max_seq_length > original_model_max_length:
+                print(f"⚠️  경고: query_max_seq_length({self.query_max_seq_length})가 모델 원래 길이({original_model_max_length})보다 깁니다.")
+            if self.passage_max_seq_length and self.passage_max_seq_length > original_model_max_length:
+                print(f"⚠️  경고: passage_max_seq_length({self.passage_max_seq_length})가 모델 원래 길이({original_model_max_length})보다 깁니다.")
         
         # 추론 모드로 설정 (임베딩 추출 시 학습이 아닌 추론)
         self.model.eval()
@@ -78,13 +129,37 @@ class BiEncoder:
         # 명시적으로 eval 모드로 설정
         self.model.eval()
         texts = [tq(q, self.template) for q in queries]
-        return self.model.encode(texts, batch_size=batch_size, convert_to_numpy=True,
-                                 normalize_embeddings=self.normalize, show_progress_bar=False)
+        
+        # 쿼리 전용 시퀀스 길이 적용
+        original_max_seq_length = self.model.max_seq_length
+        if self.query_max_seq_length is not None:
+            self.model.max_seq_length = int(self.query_max_seq_length)
+        
+        try:
+            result = self.model.encode(texts, batch_size=batch_size, convert_to_numpy=True,
+                                     normalize_embeddings=self.normalize, show_progress_bar=False)
+        finally:
+            # 원래 길이로 복원
+            self.model.max_seq_length = original_max_seq_length
+        
+        return result
 
     def encode_passages(self, passages: Iterable[str], batch_size=64) -> np.ndarray:
         """패시지 임베딩 생성 (추론 모드)"""
         # 명시적으로 eval 모드로 설정
         self.model.eval()
         texts = [tp(p, self.template) for p in passages]
-        return self.model.encode(texts, batch_size=batch_size, convert_to_numpy=True,
-                                 normalize_embeddings=self.normalize, show_progress_bar=False)
+        
+        # 패시지 전용 시퀀스 길이 적용
+        original_max_seq_length = self.model.max_seq_length
+        if self.passage_max_seq_length is not None:
+            self.model.max_seq_length = int(self.passage_max_seq_length)
+        
+        try:
+            result = self.model.encode(texts, batch_size=batch_size, convert_to_numpy=True,
+                                     normalize_embeddings=self.normalize, show_progress_bar=False)
+        finally:
+            # 원래 길이로 복원
+            self.model.max_seq_length = original_max_seq_length
+        
+        return result

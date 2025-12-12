@@ -191,12 +191,21 @@ class BiEncoderTrainer:
     # ------------------------------
     def _build_encoder(self):
         max_len = int(getattr(self.cfg.model, "max_len", 0) or 0)
+        query_max_len = int(getattr(self.cfg.model, "query_max_len", 0) or 0)
+        passage_max_len = int(getattr(self.cfg.model, "passage_max_len", 0) or 0)
+        
         encoder = get_bi_encoder(
             self.cfg.model.bi_model,
             template=self.template_mode.value,
             max_len=max_len if max_len > 0 else None,
+            query_max_len=query_max_len if query_max_len > 0 else None,
+            passage_max_len=passage_max_len if passage_max_len > 0 else None,
         )
-        if max_len > 0:
+        
+        # 로깅
+        if query_max_len > 0 or passage_max_len > 0:
+            logger.info(f"시퀀스 길이 설정: Query={encoder.query_max_seq_length}, Passage={encoder.passage_max_seq_length}")
+        elif max_len > 0:
             logger.info(f"모델 최대 시퀀스 길이 설정: {encoder.model.max_seq_length}")
         
         # PEFT (LoRA) 지원

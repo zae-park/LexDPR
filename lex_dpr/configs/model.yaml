@@ -1,7 +1,12 @@
 # configs/model.yaml
 bi_model: ko-simcse
 use_bge_template: true
-max_len: 128  # 메모리 절약: 시퀀스 길이를 256으로 제한 (기본 512)
+
+# 시퀀스 길이 설정 (DPR 표준: Query 64, Passage 256)
+# query_max_len과 passage_max_len이 설정되면 max_len은 무시됨
+max_len: 128  # 공통 시퀀스 길이 (query_max_len/passage_max_len이 없을 때 사용)
+query_max_len: 64   # 쿼리 최대 시퀀스 길이 (DPR 표준: 64 토큰)
+passage_max_len: 256  # 패시지 최대 시퀀스 길이 (DPR 표준: 256 토큰)
 
 # PEFT (LoRA) 설정 - 메모리 절약을 위해 활성화
 peft:

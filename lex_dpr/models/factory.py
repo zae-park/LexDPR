@@ -11,7 +11,21 @@ ALIASES = {
     "multilingual-e5-small": "intfloat/multilingual-e5-small",  # ~118M, 다국어
 }
 
-def get_bi_encoder(name: str, template: str = "bge", normalize: bool = True, max_len: int | None = None) -> BiEncoder:
+def get_bi_encoder(
+    name: str, 
+    template: str = "bge", 
+    normalize: bool = True, 
+    max_len: int | None = None,
+    query_max_len: int | None = None,
+    passage_max_len: int | None = None,
+) -> BiEncoder:
     real = ALIASES.get(name, name)
     mode = TemplateMode(template) if template in ("bge","none") else TemplateMode.BGE
-    return BiEncoder(real, template=mode, normalize=normalize, max_seq_length=max_len)
+    return BiEncoder(
+        real, 
+        template=mode, 
+        normalize=normalize, 
+        max_seq_length=max_len,
+        query_max_seq_length=query_max_len,
+        passage_max_seq_length=passage_max_len,
+    )
