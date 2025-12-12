@@ -51,14 +51,14 @@ def detect_type(js):
 # =========================
 # 파일 처리기
 # =========================
-def process_file(path: Path) -> Tuple[str, list[dict]]:
+def process_file(path: Path, include_items: bool = False) -> Tuple[str, list[dict]]:
     with open(path, "r", encoding="utf-8") as f:
         js = json.load(f)
     t = detect_type(js)
 
     # 법령
     if t == "law":
-        rows = list(law_iter_to_passages(js))
+        rows = list(law_iter_to_passages(js, include_items=include_items))
         return t, rows
 
     # 행정규칙
@@ -93,6 +93,8 @@ def main():
     ap.add_argument("--out-prec", default="data/processed/prec_passages.jsonl")
     ap.add_argument("--append", action="store_true", help="출력 파일에 이어쓰기")
     ap.add_argument("--glob", default="**/*.json", help="파일 검색 패턴 (기본: **/*.json)")
+    ap.add_argument("--include-items", action="store_true",
+                    help="법령 passage 생성 시 호(절) 단위까지 생성 (기본값: False, 항 단위까지만 생성)")
     args = ap.parse_args()
 
     from ..utils.io import write_jsonl, append_jsonl  # 지연 임포트
@@ -105,7 +107,7 @@ def main():
 
     for fp in files:
         try:
-            t, rows = process_file(fp)
+            t, rows = process_file(fp, include_items=args.include_items)
             if t == "law":
                 if rows:
                     n_law += 1
