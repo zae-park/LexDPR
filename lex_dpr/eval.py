@@ -292,7 +292,38 @@ def build_ir_evaluator(
 
     # 기본 InformationRetrievalEvaluator 사용 (BatchedInformationRetrievalEvaluator는 버그가 있어서 임시로 비활성화)
     # TODO: BatchedInformationRetrievalEvaluator의 메트릭 계산 로직 수정 필요
-    evaluator = InformationRetrievalEvaluator(
+    
+    # Progress bar 억제를 위한 래퍼 클래스
+    class SuppressProgressIREvaluator(InformationRetrievalEvaluator):
+        """Progress bar를 억제하는 InformationRetrievalEvaluator"""
+        def __call__(self, model, output_path: str = None, epoch: int = -1, steps: int = -1):
+            import os
+            import sys
+            from io import StringIO
+            from tqdm import tqdm
+            
+            # tqdm 출력 억제
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            sys.stdout = StringIO()
+            sys.stderr = StringIO()
+            
+            # tqdm 인스턴스 추적 비활성화
+            old_instances = getattr(tqdm, '_instances', None)
+            tqdm._instances = set()
+            
+            try:
+                result = super().__call__(model, output_path, epoch, steps)
+            finally:
+                # 복원
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                if old_instances is not None:
+                    tqdm._instances = old_instances
+            
+            return result
+    
+    evaluator = SuppressProgressIREvaluator(
         queries=queries,
         corpus=corpus,
         relevant_docs=relevant_docs,

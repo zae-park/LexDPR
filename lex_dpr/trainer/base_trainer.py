@@ -420,9 +420,51 @@ class BiEncoderTrainer:
             from sentence_transformers.evaluation import SequentialEvaluator
             base_evaluator = SequentialEvaluator([val_loss_evaluator, base_evaluator])
             
-            # 래퍼 체인: Web Logging -> Base Evaluator
+            # Progress bar 억제를 위한 래퍼 추가
+            class SuppressProgressBarEvaluator:
+                """Progress bar를 억제하는 evaluator 래퍼"""
+                def __init__(self, evaluator):
+                    self.evaluator = evaluator
+                
+                def __call__(self, model, output_path: str = None, epoch: int = -1, steps: int = -1):
+                    import os
+                    import sys
+                    from io import StringIO
+                    from tqdm import tqdm
+                    
+                    # tqdm 출력 억제
+                    old_stdout = sys.stdout
+                    old_stderr = sys.stderr
+                    sys.stdout = StringIO()
+                    sys.stderr = StringIO()
+                    
+                    # tqdm 비활성화
+                    old_disable = getattr(tqdm, '_instances', None)
+                    tqdm._instances = set()  # tqdm 인스턴스 추적 비활성화
+                    
+                    try:
+                        result = self.evaluator(model, output_path, epoch, steps)
+                    finally:
+                        # 복원
+                        sys.stdout = old_stdout
+                        sys.stderr = old_stderr
+                        if old_disable is not None:
+                            tqdm._instances = old_disable
+                    
+                    return result
+                
+                def __iter__(self):
+                    """SequentialEvaluator 호환성"""
+                    if hasattr(self.evaluator, '__iter__'):
+                        return iter(self.evaluator)
+                    return iter([self])
+            
+            # Progress bar 억제 래퍼 적용
+            suppressed_evaluator = SuppressProgressBarEvaluator(base_evaluator)
+            
+            # 래퍼 체인: Web Logging -> Suppressed Evaluator
             # Early Stopping은 warmup_steps 계산 후에 추가됨
-            current_evaluator = base_evaluator
+            current_evaluator = suppressed_evaluator
             
             # 웹 로깅 래퍼 추가
             if self.web_logger and self.web_logger.is_active:
