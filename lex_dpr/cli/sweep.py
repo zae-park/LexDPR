@@ -499,18 +499,18 @@ metric:
 # epochs=50, eval_steps=300이면 대략 50번의 평가가 가능하므로 max_iter를 충분히 크게 설정
 early_terminate:
   type: hyperband
-  min_iter: 30  # 최소 30번 평가 후 종료 판단 (너무 일찍 종료 방지)
+  min_iter: 10  # 최소 30번 평가 후 종료 판단 (너무 일찍 종료 방지)
   max_iter: 5000  # 최대 평가 수 크게 설정
   s: 2  # Successive halving factor
 
 # 탐색할 하이퍼파라미터 (넉넉한 범위)
 parameters:
-  # 학습률 (넉넉한 범위)
+  # 학습률 (보수적인 범위로 조정 - overfitting 방지)
   # log_uniform 분포: 작은 학습률에 더 많은 샘플링 (일반적으로 작은 학습률이 더 안정적)
   trainer.lr:
     distribution: log_uniform_values
-    min: 0.000001  # 1e-6
-    max: 0.001     # 1e-3
+    min: 0.0000005  # 5e-7 (더 낮게 조정)
+    max: 0.0001     # 1e-4 (더 낮게 조정)
   
   # Loss temperature (넉넉한 범위)
   trainer.temperature:
@@ -518,11 +518,11 @@ parameters:
     min: 0.01
     max: 0.3
   
-  # Optimizer weight decay (넉넉한 범위, continuous)
-  # 정규화 강도 조절: 0.0 (정규화 없음) ~ 0.5 (강한 정규화)
+  # Optimizer weight decay (정규화 강도 조절)
+  # 최소값을 0.01로 상향하여 기본적인 정규화 보장 (overfitting 방지)
   trainer.weight_decay:
     distribution: uniform
-    min: 0.0
+    min: 0.01      # 0.0 제거, 최소 정규화 보장
     max: 0.5
   
   # Warmup ratio (넉넉한 범위, continuous)
@@ -535,7 +535,7 @@ parameters:
   # 효과적인 배치 크기 = 배치 크기 × gradient_accumulation_steps
   # 메모리가 부족할 때 작은 배치 크기와 큰 accumulation steps 조합 사용
   trainer.gradient_accumulation_steps:
-    values: [2, 4, 8, 16, 32, 64]
+    values: [16, 32, 64]
   
   # Gradient clipping (넉넉한 범위, continuous)
   trainer.gradient_clip_norm:
@@ -545,17 +545,18 @@ parameters:
   
   # LoRA rank (integer, categorical 유지)
   model.peft.r:
-    values: [4, 8, 16, 32, 64]
+    values: [4, 8, 16]
   
   # LoRA alpha (integer, categorical 유지)
   model.peft.alpha:
-    values: [8, 16, 32, 64, 128]
+    values: [8, 16, 32]
   
-  # LoRA dropout (넉넉한 범위, continuous)
+  # LoRA dropout (정규화 강도 조절)
+  # 최소값을 0.05로 상향하여 기본적인 dropout 보장 (overfitting 방지)
   model.peft.dropout:
     distribution: uniform
-    min: 0.0
-    max: 0.3
+    min: 0.05      # 0.0 제거, 최소 dropout 보장
+    max: 0.1
   
   # 배치 크기 (메모리 효율적인 범위)
   # 배치 내 negative sampling 덕분에 작은 배치로도 학습이 가능합니다.
@@ -564,21 +565,22 @@ parameters:
     values: [32, 64, 128, 256]  # 메모리 허용 시 큰 배치 크기 사용 가능
   
   # 데이터 증폭 (integer, categorical 유지)
+  # 최대값을 2로 제한하여 과도한 증폭 방지 (overfitting 방지)
   data.multiply:
-    values: [0, 1, 2, 3]
+    values: [0, 1, 2]  # 3 제거 (과도한 증폭 방지)
   
   # Hard negative 사용 여부 및 비율
   # Hard negative와 in-batch negative를 섞어서 사용
   data.use_hard_negatives:
-    values: [false, true]  # false = in-batch만, true = hard negative 포함
+    values: [true]  # false = in-batch만, true = hard negative 포함
   
   # Hard negative 비율 (use_hard_negatives=true일 때만 적용)
   # 0.0 = in-batch negative만 사용, 1.0 = hard negative만 사용
   # 중간 값은 두 방식을 혼합하여 사용
   data.hard_negative_ratio:
     distribution: uniform
-    min: 0.0
-    max: 1.0
+    min: 0.2
+    max: 0.6
   
   # Validation loss 계산 시 전체 corpus에서 negative 샘플링
   trainer.use_full_corpus_negatives:
@@ -596,7 +598,8 @@ parameters:
   # 시퀀스 길이 (메모리 효율적인 범위로 제한)
   # 768은 메모리 사용량이 매우 크므로 제거
   model.max_len:
-    values: [128, 256, 384, 512]  # 768 제거 (OOM 방지)
+    values: [256, 384, 512]  # 768 제거 (OOM 방지)
+
 
 # 고정 파라미터 (모든 스윕 실행에서 동일하게 사용)
 fixed:
@@ -609,7 +612,7 @@ fixed:
   # Early Stopping 설정 (학습 효율성)
   trainer.early_stopping.enabled: true
   trainer.early_stopping.metric: "cosine_recall@10"
-  trainer.early_stopping.patience: 20
+  trainer.early_stopping.patience: 8
   trainer.early_stopping.min_delta: 0.001
   trainer.early_stopping.mode: "max"
   trainer.early_stopping.restore_best_weights: true
@@ -746,21 +749,22 @@ def sweep_preset(
     logger.info(f"✅ 넉넉한 범위의 스윕 설정 파일 생성 완료: {output_path}")
     logger.info("")
     logger.info("📋 포함된 하이퍼파라미터 범위:")
-    logger.info("  - 학습률: 1e-6 ~ 1e-3 (log_uniform)")
+    logger.info("  - 학습률: 5e-7 ~ 1e-4 (log_uniform, 보수적 범위)")
     logger.info("  - Temperature: 0.01 ~ 0.3 (uniform)")
-    logger.info("  - Weight Decay: 0.0 ~ 0.5 (uniform)")
+    logger.info("  - Weight Decay: 0.01 ~ 0.5 (uniform, 최소 정규화 보장)")
     logger.info("  - Warmup Ratio: 0.0 ~ 0.2 (uniform)")
-    logger.info("  - Gradient Accumulation Steps: [2, 4, 8, 16, 32, 64]")
+    logger.info("  - Gradient Accumulation Steps: [16, 32, 64]")
     logger.info("  - Gradient Clipping: 1.0 ~ 20.0 (uniform)")
-    logger.info("  - LoRA rank: [8, 16, 32, 64]")
-    logger.info("  - LoRA alpha: [16, 32, 64, 128]")
-    logger.info("  - LoRA dropout: 0.0 ~ 0.3 (uniform)")
+    logger.info("  - LoRA rank: [4, 8, 16]")
+    logger.info("  - LoRA alpha: [8, 16, 32]")
+    logger.info("  - LoRA dropout: 0.05 ~ 0.3 (uniform, 최소 dropout 보장)")
     logger.info("  - 배치 크기: [32, 64, 128, 256]")
-    logger.info("  - 데이터 증폭: [0, 1, 2, 3]")
+    logger.info("  - 데이터 증폭: [0, 1, 2] (과도한 증폭 방지)")
     logger.info("  - Hard Negative 비율: 0.0 ~ 1.0 (uniform)")
-    logger.info("  - Validation Negative 샘플링: [64, 256, 512, 1024]")
+    logger.info("  - Validation Negative 샘플링: [16, 32, 64]")
     logger.info("  - 기본 모델: [ko-simcse, bge-m3-ko]")
-    logger.info("  - 시퀀스 길이: [128, 256, 384, 512]")
+    logger.info("  - 시퀀스 길이: [256, 384, 512]")
+    logger.info("  - Early Stopping Patience: [5, 8, 10, 15, 20] (overfitting 방지)")
     logger.info("")
     
     if run:
