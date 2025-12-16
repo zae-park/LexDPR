@@ -138,13 +138,33 @@ class WebLogger:
             logger.warning(f"메트릭 로깅 실패: {e}")
     
     def log_artifact(self, local_path: str, artifact_path: Optional[str] = None) -> None:
-        """아티팩트(파일) 로깅"""
+        """아티팩트(파일 또는 디렉토리) 로깅"""
         if not self.is_active:
             return
         
         try:
             if self.service == "wandb":
-                self.logger_impl.log_artifact(local_path, name=artifact_path)
+                import wandb
+                import os
+                from pathlib import Path
+                
+                path = Path(local_path)
+                artifact_name = artifact_path or "model"
+                
+                # 디렉토리인 경우 Artifact 객체 사용
+                if path.is_dir():
+                    artifact = wandb.Artifact(name=artifact_name, type="model")
+                    artifact.add_dir(str(path))
+                    self.logger_impl.log_artifact(artifact)
+                    logger.info(f"WandB에 디렉토리 artifact 업로드: {local_path} -> {artifact_name}")
+                # 파일인 경우
+                elif path.is_file():
+                    artifact = wandb.Artifact(name=artifact_name, type="model")
+                    artifact.add_file(str(path))
+                    self.logger_impl.log_artifact(artifact)
+                    logger.info(f"WandB에 파일 artifact 업로드: {local_path} -> {artifact_name}")
+                else:
+                    logger.warning(f"경로를 찾을 수 없습니다: {local_path}")
             elif self.service == "mlflow":
                 try:
                     import mlflow
