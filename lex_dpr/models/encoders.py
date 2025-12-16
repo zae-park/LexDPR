@@ -82,6 +82,27 @@ class BiEncoder:
         if original_model_max_length is None:
             original_model_max_length = 512  # 기본값
         
+        # ko-simcse 모델 확인 (jhgan/ko-sroberta-multitask)
+        # 모델 이름이 ko-simcse 또는 jhgan/ko-sroberta-multitask인 경우 확인
+        # original_model_max_length가 128인 경우도 ko-simcse일 가능성이 높으므로 클리핑
+        is_ko_simcse = False
+        model_name_lower = name_or_path.lower()
+        if "ko-simcse" in model_name_lower or "ko-sroberta-multitask" in model_name_lower:
+            is_ko_simcse = True
+        
+        # ko-simcse 모델의 경우 max_seq_length를 128로 제한
+        # original_model_max_length가 128인 경우도 자동으로 클리핑 (안전한 처리)
+        if (is_ko_simcse or original_model_max_length == 128) and original_model_max_length == 128:
+            if max_seq_length and max_seq_length > 128:
+                print(f"ℹ️  정보: ko-simcse 모델은 최대 길이 128을 지원합니다. max_seq_length를 {max_seq_length}에서 128로 조정합니다.")
+                max_seq_length = 128
+            if query_max_seq_length and query_max_seq_length > 128:
+                print(f"ℹ️  정보: ko-simcse 모델은 최대 길이 128을 지원합니다. query_max_seq_length를 {query_max_seq_length}에서 128로 조정합니다.")
+                query_max_seq_length = 128
+            if passage_max_seq_length and passage_max_seq_length > 128:
+                print(f"ℹ️  정보: ko-simcse 모델은 최대 길이 128을 지원합니다. passage_max_seq_length를 {passage_max_seq_length}에서 128로 조정합니다.")
+                passage_max_seq_length = 128
+        
         # 시퀀스 길이 설정 (쿼리/패시지 분리 지원)
         # 기본값: max_seq_length를 사용하되, query/passage 별도 설정이 있으면 우선 사용
         self.query_max_seq_length = query_max_seq_length if query_max_seq_length is not None else max_seq_length
