@@ -587,7 +587,7 @@ parameters:
   # Validation loss 계산 시 각 query당 샘플링할 negative 개수
   # 작은 값(64)은 빠른 평가, 큰 값(1024)은 더 정확한 평가
   trainer.num_negatives_per_query:
-    values: [16, 32, 64, 128]  # 전체 corpus에서 샘플링할 negative 개수 (메모리와 정확도 트레이드오프)
+    values: [16, 32, 64]  # 전체 corpus에서 샘플링할 negative 개수 (메모리와 정확도 트레이드오프)
   
   # 기본 모델 (categorical)
   model.bi_model:
@@ -634,7 +634,7 @@ entity: zae-park  # WandB 엔티티 (선택사항, 없으면 현재 로그인한
 # 시간 제한 설정 (기본값: 오후 5시~새벽 7시 KST)
 # 여러 날짜에 나눠서 실행할 때 사용
 # 17-7은 17시(오후 5시)부터 다음날 7시(새벽 7시)까지 실행
-time_window: "17-7"  # 17시~7시에만 실행 (KST 기준)
+time_window: "0-24"  # 17시~7시에만 실행 (KST 기준)
 timezone: "Asia/Seoul"
 """
 

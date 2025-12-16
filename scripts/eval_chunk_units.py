@@ -181,7 +181,7 @@ def main():
     # 행정규칙 전처리
     if admin_src_dir.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.preprocess_auto",
+            sys.executable, "-m", "lex_dpr.data_processing.preprocess_auto",
             "--src-dir", str(admin_src_dir),
             "--out-admin", str(paragraph_dir / "admin_passages.jsonl"),
             "--glob", "**/*.json"
@@ -190,7 +190,7 @@ def main():
     # 법령 전처리 (항 단위)
     if law_src_dir.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.preprocess_auto",
+            sys.executable, "-m", "lex_dpr.data_processing.preprocess_auto",
             "--src-dir", str(law_src_dir),
             "--out-law", str(paragraph_dir / "law_passages.jsonl"),
             "--glob", "**/*.json"
@@ -203,14 +203,14 @@ def main():
     
     if law_file.exists() and admin_file.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.merge_corpus",
+            sys.executable, "-m", "lex_dpr.data_processing.merge_corpus",
             "--law", str(law_file),
             "--admin", str(admin_file),
             "--out", str(merged_file)
         ])
     elif law_file.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.merge_corpus",
+            sys.executable, "-m", "lex_dpr.data_processing.merge_corpus",
             "--law", str(law_file),
             "--out", str(merged_file)
         ])
@@ -228,7 +228,7 @@ def main():
     # 행정규칙 전처리
     if admin_src_dir.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.preprocess_auto",
+            sys.executable, "-m", "lex_dpr.data_processing.preprocess_auto",
             "--src-dir", str(admin_src_dir),
             "--out-admin", str(item_dir / "admin_passages.jsonl"),
             "--glob", "**/*.json"
@@ -237,7 +237,7 @@ def main():
     # 법령 전처리 (호 단위)
     if law_src_dir.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.preprocess_auto",
+            sys.executable, "-m", "lex_dpr.data_processing.preprocess_auto",
             "--src-dir", str(law_src_dir),
             "--out-law", str(item_dir / "law_passages.jsonl"),
             "--include-items",
@@ -251,14 +251,14 @@ def main():
     
     if law_file.exists() and admin_file.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.merge_corpus",
+            sys.executable, "-m", "lex_dpr.data_processing.merge_corpus",
             "--law", str(law_file),
             "--admin", str(admin_file),
             "--out", str(merged_file)
         ])
     elif law_file.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.merge_corpus",
+            sys.executable, "-m", "lex_dpr.data_processing.merge_corpus",
             "--law", str(law_file),
             "--out", str(merged_file)
         ])
@@ -276,7 +276,7 @@ def main():
     # 행정규칙 전처리 (이미 조문 단위)
     if admin_src_dir.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.preprocess_auto",
+            sys.executable, "-m", "lex_dpr.data_processing.preprocess_auto",
             "--src-dir", str(admin_src_dir),
             "--out-admin", str(article_dir / "admin_passages.jsonl"),
             "--glob", "**/*.json"
@@ -285,7 +285,7 @@ def main():
     # 법령 전처리 (항 단위로 먼저 생성 후 조문 단위로 병합)
     if law_src_dir.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.preprocess_auto",
+            sys.executable, "-m", "lex_dpr.data_processing.preprocess_auto",
             "--src-dir", str(law_src_dir),
             "--out-law", str(article_dir / "law_passages_temp.jsonl"),
             "--glob", "**/*.json"
@@ -305,14 +305,14 @@ def main():
     
     if law_file.exists() and admin_file.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.merge_corpus",
+            sys.executable, "-m", "lex_dpr.data_processing.merge_corpus",
             "--law", str(law_file),
             "--admin", str(admin_file),
             "--out", str(merged_file)
         ])
     elif law_file.exists():
         run_command([
-            "poetry", "run", "python", "-m", "lex_dpr.data_processing.merge_corpus",
+            sys.executable, "-m", "lex_dpr.data_processing.merge_corpus",
             "--law", str(law_file),
             "--out", str(merged_file)
         ])
@@ -353,9 +353,9 @@ def main():
             # 평가 실행
             k_values_str = " ".join(str(k) for k in args.k_values)
             eval_cmd = [
-                "poetry", "run", "lex-dpr", "eval",
+                "lex-dpr", "eval",
                 "--model", model,
-                "--corpus", str(corpus_file),
+                "--passages", str(corpus_file),
                 "--eval-pairs", str(eval_pairs),
                 "--output", str(result_file),
                 "--report", str(report_file),
@@ -370,8 +370,6 @@ def main():
                 eval_cmd.extend(["--wandb-name", f"{chunk_type}_{model_name}"])
                 if args.wandb_entity:
                     eval_cmd.extend(["--wandb-entity", args.wandb_entity])
-            else:
-                eval_cmd.append("--no-wandb")
             
             try:
                 run_command(eval_cmd)
@@ -380,8 +378,10 @@ def main():
                 if result_file.exists():
                     with open(result_file, 'r', encoding='utf-8') as f:
                         results = json.load(f)
-                        all_results[chunk_type][model] = results
-                        print(f"    ✅ 완료: NDCG@10={results.get('val_cosine_ndcg@10', 0):.4f}")
+                        # metrics가 중첩된 경우 처리
+                        metrics = results.get('metrics', results)
+                        all_results[chunk_type][model] = metrics
+                        print(f"    ✅ 완료: NDCG@10={metrics.get('val_cosine_ndcg@10', 0):.4f}")
             except subprocess.CalledProcessError as e:
                 print(f"    ⚠️  평가 실패: {e}")
         
@@ -408,14 +408,14 @@ def main():
             
             for chunk_type in ["paragraph", "item", "article"]:
                 if chunk_type in all_results and model in all_results[chunk_type]:
-                    results = all_results[chunk_type][model]
+                    metrics = all_results[chunk_type][model]
                     corpus_file = output_base_dir / chunk_type / "merged_corpus.jsonl"
                     passage_count = len(list(read_jsonl(corpus_file))) if corpus_file.exists() else 0
                     
                     f.write(f"{chunk_type:<20} "
-                           f"{results.get('val_cosine_ndcg@10', 0):<15.4f} "
-                           f"{results.get('val_cosine_recall@10', 0):<15.4f} "
-                           f"{results.get('val_cosine_mrr@10', 0):<15.4f} "
+                           f"{metrics.get('val_cosine_ndcg@10', 0):<15.4f} "
+                           f"{metrics.get('val_cosine_recall@10', 0):<15.4f} "
+                           f"{metrics.get('val_cosine_mrr@10', 0):<15.4f} "
                            f"{passage_count:<15,}\n")
             
             f.write("\n")
@@ -440,11 +440,11 @@ def main():
             
             for model in args.models:
                 if chunk_type in all_results and model in all_results[chunk_type]:
-                    results = all_results[chunk_type][model]
+                    metrics = all_results[chunk_type][model]
                     f.write(f"모델: {model}\n")
                     for key in ['val_cosine_ndcg@10', 'val_cosine_recall@10', 'val_cosine_mrr@10']:
-                        if key in results:
-                            f.write(f"  {key}: {results[key]:.4f}\n")
+                        if key in metrics:
+                            f.write(f"  {key}: {metrics[key]:.4f}\n")
                     f.write("\n")
     
     # ==========================================
