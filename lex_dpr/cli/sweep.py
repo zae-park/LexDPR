@@ -592,8 +592,14 @@ parameters:
     values: [16, 32, 64]  # 전체 corpus에서 샘플링할 negative 개수 (메모리와 정확도 트레이드오프)
   
   # 기본 모델 (categorical)
+  # bge-m3-ko는 메모리 사용량이 크므로 주의 필요 (배치 크기/시퀀스 길이 조절 권장)
   model.bi_model:
-    values: [ko-simcse, bge-m3-ko]
+    values: [
+      ko-simcse,  # ~110M, 한국어 전용, 작은 메모리 (권장)
+      bge-m3-ko,  # ~560M, 한국어 최적화, 큰 메모리 (OOM 주의)
+      multilingual-minilm,  # ~117M, 다국어, 경량
+      multilingual-e5-small  # ~118M, 다국어, E5 시리즈
+    ]
   
   # 시퀀스 길이 (메모리 효율적인 범위로 제한)
   # 768은 메모리 사용량이 매우 크므로 제거
@@ -616,6 +622,10 @@ fixed:
   trainer.early_stopping.min_delta: 0.001
   trainer.early_stopping.mode: "max"
   trainer.early_stopping.restore_best_weights: true
+  
+  # 메모리 최적화 설정
+  trainer.gradient_checkpointing: true  # 메모리 절약 (약 10GB 절감)
+  trainer.use_amp: true  # Mixed precision training (메모리 절약)
   
   # 모델 설정
   model.use_bge_template: true  # BGE 템플릿 사용
@@ -762,7 +772,11 @@ def sweep_preset(
     logger.info("  - 데이터 증폭: [0, 1, 2] (과도한 증폭 방지)")
     logger.info("  - Hard Negative 비율: 0.0 ~ 1.0 (uniform)")
     logger.info("  - Validation Negative 샘플링: [16, 32, 64]")
-    logger.info("  - 기본 모델: [ko-simcse, bge-m3-ko]")
+    logger.info("  - 기본 모델: [ko-simcse, bge-m3-ko, multilingual-minilm, multilingual-e5-small]")
+    logger.info("    * ko-simcse: ~110M, 한국어 전용, 작은 메모리 (권장)")
+    logger.info("    * bge-m3-ko: ~560M, 한국어 최적화, 큰 메모리 (OOM 주의, 배치/시퀀스 길이 조절 권장)")
+    logger.info("    * multilingual-minilm: ~117M, 다국어, 경량")
+    logger.info("    * multilingual-e5-small: ~118M, 다국어, E5 시리즈")
     logger.info("  - 시퀀스 길이: [256, 384, 512]")
     logger.info("  - Early Stopping Patience: [5, 8, 10, 15, 20] (overfitting 방지)")
     logger.info("")
