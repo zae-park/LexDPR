@@ -732,36 +732,42 @@ class BiEncoderTrainer:
 
         logger.info("")
         
-        # Early Stopping이 발생한 경우 최고 성능 모델이 이미 저장되어 있음
+        # 모델 로컬 저장 (항상 수행)
+        logger.info("모델 저장 중...")
+        os.makedirs(self.cfg.out_dir, exist_ok=True)
+        final_model_path = os.path.join(self.cfg.out_dir, "bi_encoder")
+        self.model.save(final_model_path)
+        logger.info(f"✅ 최종 모델 저장 완료: {final_model_path}")
+        
+        # Early Stopping이 활성화된 경우 최고 성능 모델 확인
         early_stopping = self._get_early_stopping()
-        if early_stopping and early_stopping.should_stop:
-            logger.info("Early Stopping으로 인해 최고 성능 모델이 이미 저장되었습니다.")
+        model_path_for_artifact = None  # artifact 업로드를 위한 경로 (최고 성능 모델 우선)
+        
+        if early_stopping and early_stopping.get_best_step() >= 0:
             best_path = os.path.join(self.cfg.out_dir, "bi_encoder_best")
             if os.path.exists(best_path):
-                logger.info(f"최고 성능 모델 경로: {best_path}")
+                logger.info(f"✅ 최고 성능 모델 경로: {best_path}")
                 logger.info(f"최고 성능: {early_stopping.metric_key}={early_stopping.get_best_score():.4f} (step {early_stopping.get_best_step()})")
+                # 최고 성능 모델을 artifact로 업로드
+                model_path_for_artifact = best_path
+            else:
+                logger.info("최고 성능 모델이 아직 저장되지 않았습니다. 최종 모델을 artifact로 업로드합니다.")
+                model_path_for_artifact = final_model_path
         else:
-            # 일반 모델 저장
-            logger.info("모델 저장 중...")
-            os.makedirs(self.cfg.out_dir, exist_ok=True)
-            save_path = os.path.join(self.cfg.out_dir, "bi_encoder")
-            self.model.save(save_path)
-            logger.info(f"✅ 모델 저장 완료: {save_path}")
-            
-            # Early Stopping이 활성화된 경우 최고 성능 모델도 최종 모델로 복사
-            if early_stopping and early_stopping.get_best_step() >= 0:
-                best_path = os.path.join(self.cfg.out_dir, "bi_encoder_best")
-                if os.path.exists(best_path):
-                    logger.info(f"최고 성능 모델도 저장되어 있습니다: {best_path}")
-                    logger.info(f"최고 성능: {early_stopping.metric_key}={early_stopping.get_best_score():.4f} (step {early_stopping.get_best_step()})")
+            # Early Stopping이 비활성화된 경우 최종 모델을 artifact로 업로드
+            logger.info("Early Stopping이 비활성화되어 있습니다. 최종 모델을 artifact로 업로드합니다.")
+            model_path_for_artifact = final_model_path
         
-        # 웹 로깅에 모델 아티팩트 저장
-        if self.web_logger and self.web_logger.is_active:
+        # 웹 로깅에 모델 아티팩트 저장 (최고 성능 모델 우선)
+        if self.web_logger and self.web_logger.is_active and model_path_for_artifact:
             try:
-                self.web_logger.log_artifact(save_path, artifact_path="model")
-                logger.info("모델이 웹 로깅 서비스에 업로드되었습니다.")
+                logger.info(f"모델 artifact 업로드 중: {model_path_for_artifact}")
+                self.web_logger.log_artifact(model_path_for_artifact, artifact_path="model")
+                logger.info(f"✅ 모델이 웹 로깅 서비스에 업로드되었습니다: {model_path_for_artifact}")
             except Exception as e:
                 logger.warning(f"모델 아티팩트 업로드 실패: {e}")
+                import traceback
+                logger.debug(f"상세 에러: {traceback.format_exc()}")
 
         if self.cfg.trainer.eval_pairs and os.path.exists(self.cfg.trainer.eval_pairs):
             logger.info("")
