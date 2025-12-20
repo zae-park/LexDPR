@@ -261,24 +261,39 @@ class BiEncoderTrainer:
                 encoder.model.train()
         
         # Gradient checkpointing 활성화 (메모리 절약)
+        # 주의: PEFT 모델과 함께 사용할 때는 문제가 발생할 수 있음
+        # Base model이 freeze되어 있으면 gradient checkpointing이 제대로 작동하지 않을 수 있음
         if getattr(self.cfg.trainer, "gradient_checkpointing", False):
             from sentence_transformers import models as st_models
-            # SentenceTransformer의 첫 번째 Transformer 모듈 찾기
+            # PEFT 모델인지 확인
+            peft_enabled = False
             for module in encoder.model.modules():
                 if isinstance(module, st_models.Transformer):
                     if hasattr(module, "auto_model"):
-                        base_model = module.auto_model
-                        # PEFT 모델인 경우 base_model에서 찾기
-                        if hasattr(base_model, "base_model"):
-                            base_model = base_model.base_model.model
-                        
-                        if hasattr(base_model, "gradient_checkpointing_enable"):
-                            base_model.gradient_checkpointing_enable()
-                            logger.info("Gradient checkpointing 활성화됨.")
-                        elif hasattr(base_model, "encoder") and hasattr(base_model.encoder, "gradient_checkpointing_enable"):
-                            base_model.encoder.gradient_checkpointing_enable()
-                            logger.info("Gradient checkpointing 활성화됨 (encoder).")
-                        break
+                        peft_model = module.auto_model
+                        if hasattr(peft_model, "base_model"):
+                            peft_enabled = True
+                            break
+            
+            if peft_enabled:
+                # PEFT 모델인 경우 gradient checkpointing 비활성화 (호환성 문제)
+                logger.warning("⚠️  Gradient checkpointing이 PEFT 모델과 호환되지 않아 비활성화됩니다.")
+                logger.warning("   Base model이 freeze되어 있어 gradient checkpointing이 제대로 작동하지 않습니다.")
+                logger.warning("   PEFT 모델에서는 gradient checkpointing을 사용하지 않는 것이 안전합니다.")
+            else:
+                # PEFT 모델이 아닌 경우에만 gradient checkpointing 활성화
+                for module in encoder.model.modules():
+                    if isinstance(module, st_models.Transformer):
+                        if hasattr(module, "auto_model"):
+                            base_model = module.auto_model
+                            
+                            if hasattr(base_model, "gradient_checkpointing_enable"):
+                                base_model.gradient_checkpointing_enable()
+                                logger.info("Gradient checkpointing 활성화됨.")
+                            elif hasattr(base_model, "encoder") and hasattr(base_model.encoder, "gradient_checkpointing_enable"):
+                                base_model.encoder.gradient_checkpointing_enable()
+                                logger.info("Gradient checkpointing 활성화됨 (encoder).")
+                            break
         
         return encoder
 
