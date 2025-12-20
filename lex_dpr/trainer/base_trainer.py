@@ -382,13 +382,17 @@ class BiEncoderTrainer:
             loss = losses.MultipleNegativesRankingLoss(self.model, scale=self.cfg.trainer.temperature)
         
         # Gradient clipping 적용
+        # Gradient clipping hook은 Accelerate와 호환되지 않아 비활성화됨
+        # sentence-transformers의 fit()은 내부적으로 Accelerate를 사용하므로
+        # backward hook에서 gradient clipping을 수행할 수 없음
         gradient_clip_norm = float(getattr(self.cfg.trainer, "gradient_clip_norm", 0.0))
         self.gradient_clipping_hook = None
         if gradient_clip_norm > 0:
-            self.gradient_clipping_hook = apply_gradient_clipping_to_model(
-                self.model,
-                max_norm=gradient_clip_norm,
-            )
+            logger.warning("⚠️  Gradient clipping hook이 Accelerate와 호환되지 않아 비활성화됩니다.")
+            logger.warning(f"   gradient_clip_norm={gradient_clip_norm} 설정이 무시됩니다.")
+            logger.warning("   sentence-transformers의 fit()은 내부적으로 Accelerate를 사용하므로,")
+            logger.warning("   backward hook에서 gradient clipping을 수행할 수 없습니다.")
+            # Hook을 생성하지 않음 (완전히 비활성화)
 
         evaluator = None
         early_stopping = None
