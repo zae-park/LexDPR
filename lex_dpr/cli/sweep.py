@@ -1239,18 +1239,45 @@ def _run_agent_impl(
             
             # wandb.agent()에 프로젝트와 엔티티 정보 전달
             # WandB는 sweep_id만으로도 작동하지만, project와 entity를 명시하면 더 정확함
+            # sweep_id가 entity/project/sweep_id 형식인지 확인
             agent_kwargs = {}
-            if wandb_project:
-                agent_kwargs["project"] = wandb_project
-            # entity는 명시적으로 설정된 경우에만 전달
-            # None이면 전달하지 않아 WandB가 자동으로 현재 사용자 엔티티를 사용하도록 함
-            if wandb_entity:
-                agent_kwargs["entity"] = wandb_entity
             
-            logger.info(f"WandB Agent 실행:")
-            logger.info(f"  sweep_id: {sweep_id}")
-            logger.info(f"  project: {wandb_project}")
-            logger.info(f"  entity: {wandb_entity or '(자동 - 현재 사용자)'}")
+            # sweep_id 형식 확인 및 파싱
+            if "/" in sweep_id:
+                # entity/project/sweep_id 형식
+                parts = sweep_id.split("/")
+                if len(parts) == 3:
+                    # entity/project/sweep_id 형식이면 그대로 사용
+                    actual_sweep_id = sweep_id
+                    logger.info(f"📋 Sweep ID 형식: entity/project/sweep_id")
+                elif len(parts) == 2:
+                    # project/sweep_id 형식
+                    actual_sweep_id = sweep_id
+                    logger.info(f"📋 Sweep ID 형식: project/sweep_id")
+                else:
+                    actual_sweep_id = sweep_id
+                    logger.warning(f"⚠️  예상치 못한 sweep_id 형식: {sweep_id}")
+            else:
+                # 단순 sweep_id 형식 - project와 entity를 명시적으로 전달
+                actual_sweep_id = sweep_id
+                if wandb_project:
+                    agent_kwargs["project"] = wandb_project
+                # entity는 명시적으로 설정된 경우에만 전달
+                # None이면 전달하지 않아 WandB가 자동으로 현재 사용자 엔티티를 사용하도록 함
+                if wandb_entity:
+                    agent_kwargs["entity"] = wandb_entity
+                logger.info(f"📋 Sweep ID 형식: 단순 ID (project/entity 별도 전달)")
+            
+            logger.info("")
+            logger.info("=" * 80)
+            logger.info("🚀 WandB Agent 실행 준비")
+            logger.info("=" * 80)
+            logger.info(f"  sweep_id: {actual_sweep_id}")
+            logger.info(f"  project: {wandb_project or '(sweep_id에 포함됨)'}")
+            logger.info(f"  entity: {wandb_entity or '(sweep_id에 포함됨 또는 자동 감지)'}")
+            if agent_kwargs:
+                logger.info(f"  추가 인자: {agent_kwargs}")
+            logger.info("=" * 80)
             logger.info("")
             
             # CUDA 메모리 할당 최적화 환경 변수 설정
@@ -1356,14 +1383,16 @@ def _run_agent_impl(
                     logger.debug(f"WandB API 확인 중 에러 (무시하고 계속 진행): {api_error}")
             
             # wandb.agent() 호출
-            # sweep_id 형식: entity/project/sweep_id 또는 project/sweep_id
-            # project와 entity를 명시하면 더 정확하게 sweep을 찾을 수 있음
             # time_window가 설정된 경우, 각 run 시작 전에 시간을 체크하기 위해 count=1로 설정
             # 이렇게 하면 각 run이 끝난 후 time_window를 체크할 수 있음
             agent_count = 1 if time_window else count  # time_window가 있으면 한 번에 하나씩만 실행
             
             try:
-                wandb.agent(sweep_id, function=train_fn, count=agent_count, **agent_kwargs)
+                logger.info(f"🔄 wandb.agent() 호출 중...")
+                logger.info(f"   sweep_id: {actual_sweep_id}")
+                logger.info(f"   count: {agent_count}")
+                logger.info(f"   kwargs: {agent_kwargs}")
+                wandb.agent(actual_sweep_id, function=train_fn, count=agent_count, **agent_kwargs)
             except Exception as e:
                 error_msg = str(e).lower()
                 is_404 = "404" in error_msg or "not found" in error_msg or "agent not found" in error_msg
