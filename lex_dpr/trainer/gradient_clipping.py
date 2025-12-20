@@ -39,72 +39,19 @@ class GradientClippingHook:
         self.hook_handle = None
     
     def register_hook(self):
-        """모델의 backward hook 등록"""
-        # backward 완료 후 한 번만 실행되도록 하기 위한 플래그
-        self._clipping_done = False
+        """모델의 backward hook 등록 (비활성화됨 - Accelerate 호환성 문제)"""
+        # Accelerate를 사용하는 경우, backward hook 내에서 gradient를 직접 수정하면 안 됨
+        # sentence-transformers의 fit()은 내부적으로 Accelerate를 사용하므로
+        # hook 방식은 Accelerate의 backward와 충돌함
         
-        def backward_hook(grad):
-            """Backward 후 gradient clipping 수행"""
-            self.total_count += 1
-            
-            # Gradient clipping 수행 (한 번만 실행)
-            # 모든 파라미터의 gradient가 계산된 후에만 실행
-            if self.max_norm > 0 and not self._clipping_done:
-                try:
-                    # 학습 가능한 파라미터만 선택 (gradient가 있고 requires_grad=True인 것만)
-                    parameters = [p for p in self.model.parameters() if p.requires_grad and p.grad is not None]
-                    
-                    # 모든 학습 가능한 파라미터의 gradient가 계산되었는지 확인
-                    trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-                    all_grads_computed = len(parameters) == len(trainable_params) and len(parameters) > 0
-                    
-                    if all_grads_computed and parameters:
-                        # Gradient norm 계산 및 clipping
-                        # clip_grad_norm_()은 requires_grad=True이고 grad가 None이 아닌 파라미터만 처리
-                        total_norm = torch.nn.utils.clip_grad_norm_(parameters, self.max_norm)
-                        self.last_norm = total_norm.item()
-                        self._clipping_done = True
-                        
-                        # Clipping이 발생했는지 확인 (norm이 max_norm보다 큰 경우)
-                        if total_norm > self.max_norm:
-                            self.clipped_count += 1
-                            if self.clipped_count % 100 == 1:  # 로그 스팸 방지
-                                logger.debug(
-                                    f"Gradient clipping 적용: norm={total_norm:.4f} > max_norm={self.max_norm:.4f}"
-                                )
-                except RuntimeError as e:
-                    # "element 0 of tensors does not require grad" 또는 "grad_fn" 에러 방지
-                    # 이것은 정상적인 동작일 수 있음:
-                    # - 일부 파라미터의 gradient가 아직 계산되지 않았거나
-                    # - gradient가 detach되었을 수 있음
-                    # - backward pass가 완료되기 전에 hook이 호출될 수 있음
-                    error_msg = str(e).lower()
-                    if "does not require grad" in error_msg or "grad_fn" in error_msg:
-                        # 다음 hook 호출에서 다시 시도 (정상적인 동작)
-                        # 디버그 모드에서만 로깅 (로그 스팸 방지)
-                        if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug(f"Gradient clipping 대기 중 (일부 gradient 아직 계산 중): {e}")
-                        pass
-                    else:
-                        raise
-                except Exception as e:
-                    # 다른 예외는 로깅만 하고 계속 진행
-                    logger.warning(f"Gradient clipping 중 예외 발생 (무시됨): {e}")
-            
-            return grad  # gradient를 그대로 반환
-        
-        # Gradient를 요구하는 파라미터 찾기
-        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-        
-        if not trainable_params:
-            logger.warning("학습 가능한 파라미터가 없어 gradient clipping hook을 등록할 수 없습니다.")
-            return
-        
-        # 마지막 학습 가능한 파라미터에 hook 등록
-        # backward pass가 완료된 후에 clipping 수행 (모든 gradient가 계산된 후)
-        last_trainable_param = trainable_params[-1]
-        self.hook_handle = last_trainable_param.register_hook(backward_hook)
-        logger.info(f"Gradient clipping hook 등록됨 (max_norm={self.max_norm}, 학습 가능한 파라미터: {len(trainable_params)}개)")
+        # Hook을 등록하지 않음 (비활성화)
+        self.hook_handle = None
+        logger.warning("⚠️  Gradient clipping hook이 Accelerate와 호환되지 않아 비활성화됩니다.")
+        logger.warning("   sentence-transformers의 fit()은 내부적으로 Accelerate를 사용하므로,")
+        logger.warning("   backward hook에서 gradient clipping을 수행할 수 없습니다.")
+        logger.warning("   gradient_clip_norm 설정은 현재 무시됩니다.")
+        logger.warning("   대안: optimizer에 max_grad_norm을 설정하거나,")
+        logger.warning("   sentence-transformers의 Trainer를 확장하여 gradient clipping을 구현하세요.")
     
     def remove_hook(self):
         """Hook 제거"""
