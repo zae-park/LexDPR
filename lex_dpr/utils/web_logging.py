@@ -62,13 +62,27 @@ class WebLogger:
         # WandB 로그인
         wandb.login(key=token)
         
+        # Sweep 모드에서는 wandb.agent()가 이미 wandb.init()을 호출했을 수 있음
+        # 이미 run이 존재하는 경우 재초기화하지 않음
+        if wandb.run is not None:
+            logger.info("WandB run이 이미 존재합니다. 기존 run을 사용합니다.")
+            logger.info(f"  기존 run ID: {wandb.run.id}")
+            logger.info(f"  기존 run name: {wandb.run.name}")
+            self.logger_impl = wandb.run
+            return
+        
+        # run_name 충돌 방지를 위해 reinit=True 옵션 추가
+        init_kwargs = kwargs.copy()
+        init_kwargs["name"] = name
+        # reinit=True로 설정하여 기존 run과 충돌 시 재초기화 허용
+        init_kwargs["reinit"] = True
+        
         run = wandb.init(
             project=project,
-            name=name,
-            **kwargs
+            **init_kwargs
         )
         self.logger_impl = run
-        logger.info(f"WandB 프로젝트: {project}, 실행 이름: {name}")
+        logger.info(f"WandB 프로젝트: {project}, 실행 이름: {run.name}")
     
     def _init_mlflow(self, token: str, tracking_uri: Optional[str] = None, experiment_name: Optional[str] = None, run_name: Optional[str] = None, **kwargs):
         """MLflow 초기화"""

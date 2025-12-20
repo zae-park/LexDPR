@@ -40,26 +40,51 @@ class GradientClippingHook:
     
     def register_hook(self):
         """모델의 backward hook 등록"""
+        # backward 완료 후 한 번만 실행되도록 하기 위한 플래그
+        self._clipping_done = False
+        
         def backward_hook(grad):
             """Backward 후 gradient clipping 수행"""
             self.total_count += 1
             
-            # Gradient clipping 수행
-            if self.max_norm > 0:
-                # 학습 가능한 파라미터만 선택 (gradient가 있고 requires_grad=True인 것만)
-                parameters = [p for p in self.model.parameters() if p.grad is not None and p.requires_grad]
-                if parameters:
-                    # Gradient norm 계산 및 clipping
-                    total_norm = torch.nn.utils.clip_grad_norm_(parameters, self.max_norm)
-                    self.last_norm = total_norm.item()
+            # Gradient clipping 수행 (한 번만 실행)
+            # 모든 파라미터의 gradient가 계산된 후에만 실행
+            if self.max_norm > 0 and not self._clipping_done:
+                try:
+                    # 학습 가능한 파라미터만 선택 (gradient가 있고 requires_grad=True인 것만)
+                    parameters = [p for p in self.model.parameters() if p.requires_grad and p.grad is not None]
                     
-                    # Clipping이 발생했는지 확인 (norm이 max_norm보다 큰 경우)
-                    if total_norm > self.max_norm:
-                        self.clipped_count += 1
-                        if self.clipped_count % 100 == 1:  # 로그 스팸 방지
-                            logger.debug(
-                                f"Gradient clipping 적용: norm={total_norm:.4f} > max_norm={self.max_norm:.4f}"
-                            )
+                    # 모든 학습 가능한 파라미터의 gradient가 계산되었는지 확인
+                    trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+                    all_grads_computed = len(parameters) == len(trainable_params) and len(parameters) > 0
+                    
+                    if all_grads_computed and parameters:
+                        # Gradient norm 계산 및 clipping
+                        # clip_grad_norm_()은 requires_grad=True이고 grad가 None이 아닌 파라미터만 처리
+                        total_norm = torch.nn.utils.clip_grad_norm_(parameters, self.max_norm)
+                        self.last_norm = total_norm.item()
+                        self._clipping_done = True
+                        
+                        # Clipping이 발생했는지 확인 (norm이 max_norm보다 큰 경우)
+                        if total_norm > self.max_norm:
+                            self.clipped_count += 1
+                            if self.clipped_count % 100 == 1:  # 로그 스팸 방지
+                                logger.debug(
+                                    f"Gradient clipping 적용: norm={total_norm:.4f} > max_norm={self.max_norm:.4f}"
+                                )
+                except RuntimeError as e:
+                    # "element 0 of tensors does not require grad" 에러 방지
+                    error_msg = str(e).lower()
+                    if "does not require grad" in error_msg or "grad_fn" in error_msg:
+                        # 일부 파라미터의 gradient가 아직 계산되지 않았거나
+                        # gradient가 detach되었을 수 있음
+                        # 다음 hook 호출에서 다시 시도
+                        pass
+                    else:
+                        raise
+                except Exception as e:
+                    # 다른 예외는 로깅만 하고 계속 진행
+                    logger.warning(f"Gradient clipping 중 예외 발생 (무시됨): {e}")
             
             return grad  # gradient를 그대로 반환
         
@@ -70,10 +95,10 @@ class GradientClippingHook:
             logger.warning("학습 가능한 파라미터가 없어 gradient clipping hook을 등록할 수 없습니다.")
             return
         
-        # 첫 번째 학습 가능한 파라미터에 hook 등록
-        # (실제로는 모든 파라미터에 대해 동일한 hook이 호출됨)
-        first_trainable_param = trainable_params[0]
-        self.hook_handle = first_trainable_param.register_hook(backward_hook)
+        # 마지막 학습 가능한 파라미터에 hook 등록
+        # backward pass가 완료된 후에 clipping 수행 (모든 gradient가 계산된 후)
+        last_trainable_param = trainable_params[-1]
+        self.hook_handle = last_trainable_param.register_hook(backward_hook)
         logger.info(f"Gradient clipping hook 등록됨 (max_norm={self.max_norm}, 학습 가능한 파라미터: {len(trainable_params)}개)")
     
     def remove_hook(self):
@@ -81,6 +106,7 @@ class GradientClippingHook:
         if self.hook_handle is not None:
             self.hook_handle.remove()
             self.hook_handle = None
+            self._clipping_done = False  # 플래그 리셋
             logger.info("Gradient clipping hook 제거됨")
     
     def get_stats(self) -> dict:
