@@ -238,10 +238,26 @@ class BiEncoderTrainer:
             try:
                 enable_lora_only_train(encoder.model)
                 logger.info("LoRA 어댑터 연결 완료. LoRA 파라미터만 학습됩니다.")
+                
+                # 학습 가능한 파라미터 확인 (에러 방지)
+                trainable_params = [p for p in encoder.model.parameters() if p.requires_grad]
+                if not trainable_params:
+                    logger.error("❌ 학습 가능한 파라미터가 없습니다!")
+                    logger.error("   PEFT 모델 설정에 문제가 있을 수 있습니다.")
+                    raise RuntimeError("No trainable parameters found in the model. Cannot perform backward pass.")
+                logger.info(f"✅ 학습 가능한 파라미터: {sum(p.numel() for p in trainable_params):,}개")
             except Exception as e:
                 logger.warning(f"enable_lora_only_train 실패: {e}")
                 logger.info("PEFT 기본 설정으로 계속 진행합니다...")
                 # PEFT가 자동으로 처리하도록 함
+                
+                # 학습 가능한 파라미터 확인 (에러 방지)
+                trainable_params = [p for p in encoder.model.parameters() if p.requires_grad]
+                if not trainable_params:
+                    logger.error("❌ 학습 가능한 파라미터가 없습니다!")
+                    logger.error("   PEFT 모델 설정에 문제가 있을 수 있습니다.")
+                    raise RuntimeError("No trainable parameters found in the model. Cannot perform backward pass.")
+                logger.info(f"✅ 학습 가능한 파라미터: {sum(p.numel() for p in trainable_params):,}개")
                 encoder.model.train()
         
         # Gradient checkpointing 활성화 (메모리 절약)

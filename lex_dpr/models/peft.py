@@ -103,6 +103,11 @@ def enable_lora_only_train(st_model: SentenceTransformer):
     t = _get_st_transformer(st_model)
     peft_model = t.auto_model
     
+    # PEFT 모델인지 확인
+    if not hasattr(peft_model, "base_model"):
+        print("[enable_lora_only_train] WARNING: 모델이 PEFT 모델이 아닙니다. 건너뜁니다.")
+        return
+    
     # PEFT 모델의 trainable 파라미터 정보 출력
     if hasattr(peft_model, "print_trainable_parameters"):
         print("[enable_lora_only_train] PEFT model trainable parameters:")
@@ -122,13 +127,29 @@ def enable_lora_only_train(st_model: SentenceTransformer):
                 param.requires_grad = True
             trainable_count += 1
         else:
-            # Base model 파라미터는 명시적으로 freeze
+            # Base model 파라미터는 명시적으로 freeze (이미 PEFT가 자동으로 freeze하지만 확인)
             if param.requires_grad:
                 param.requires_grad = False
                 frozen_count += 1
     
+    print(f"[enable_lora_only_train] PEFT 파라미터 상태: LoRA={trainable_count}개 (trainable), Base={frozen_count}개 (frozen)")
+    
     # SentenceTransformer의 다른 모듈들(pooling 등)은 학습 가능하게 유지
     # 이들은 보통 작은 파라미터 수를 가지므로 학습 가능하게 두는 것이 좋음
+    # 하지만 PEFT 모델의 base_model 파라미터는 이미 동결되어 있으므로,
+    # SentenceTransformer의 다른 모듈들만 확인하면 됨
+    
+    # SentenceTransformer의 다른 모듈들(pooling 등) 확인
+    # pooling 모듈은 보통 파라미터가 없지만, 확인해봐야 함
+    for name, module in st_model.named_modules():
+        # Transformer 모듈은 이미 처리했으므로 건너뜀
+        if isinstance(module, st_models.Transformer):
+            continue
+        # 다른 모듈의 파라미터는 학습 가능하게 유지
+        for param_name, param in module.named_parameters(recurse=False):
+            if not param.requires_grad:
+                param.requires_grad = True
+                print(f"[enable_lora_only_train] Enabled gradient for {name}.{param_name}")
     
     # 전체 모델의 학습 가능한 파라미터 확인
     trainable_params = sum(p.numel() for p in st_model.parameters() if p.requires_grad)
