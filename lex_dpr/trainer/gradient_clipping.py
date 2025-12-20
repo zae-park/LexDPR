@@ -73,12 +73,17 @@ class GradientClippingHook:
                                     f"Gradient clipping 적용: norm={total_norm:.4f} > max_norm={self.max_norm:.4f}"
                                 )
                 except RuntimeError as e:
-                    # "element 0 of tensors does not require grad" 에러 방지
+                    # "element 0 of tensors does not require grad" 또는 "grad_fn" 에러 방지
+                    # 이것은 정상적인 동작일 수 있음:
+                    # - 일부 파라미터의 gradient가 아직 계산되지 않았거나
+                    # - gradient가 detach되었을 수 있음
+                    # - backward pass가 완료되기 전에 hook이 호출될 수 있음
                     error_msg = str(e).lower()
                     if "does not require grad" in error_msg or "grad_fn" in error_msg:
-                        # 일부 파라미터의 gradient가 아직 계산되지 않았거나
-                        # gradient가 detach되었을 수 있음
-                        # 다음 hook 호출에서 다시 시도
+                        # 다음 hook 호출에서 다시 시도 (정상적인 동작)
+                        # 디버그 모드에서만 로깅 (로그 스팸 방지)
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Gradient clipping 대기 중 (일부 gradient 아직 계산 중): {e}")
                         pass
                     else:
                         raise

@@ -1029,7 +1029,16 @@ def _run_agent_impl(
             if wandb.run is None:
                 logger.warning("wandb.run이 None입니다. wandb.init()을 호출합니다...")
                 try:
-                    wandb.init()
+                    # nohup 등 비-TTY 환경에서도 정상 동작하도록 설정
+                    import os
+                    init_kwargs = {}
+                    # TTY가 없을 때도 정상 동작하도록 설정
+                    if not sys.stdout.isatty():
+                        init_kwargs["mode"] = "online"  # 명시적으로 online 모드
+                        # 로컬 저장 위치 명시 (nohup으로 실행할 때 경로 문제 방지)
+                        if "WANDB_DIR" not in os.environ:
+                            init_kwargs["dir"] = os.getcwd()
+                    wandb.init(**init_kwargs)
                     # WandB 로컬 저장 위치 확인 및 로깅
                     if wandb.run:
                         wandb_dir = wandb.run.dir if hasattr(wandb.run, 'dir') else None
@@ -1249,6 +1258,19 @@ def _run_agent_impl(
                         logger.info("CUDA 메모리 할당 최적화 활성화: expandable_segments:True")
             except ImportError:
                 pass  # torch가 설치되지 않은 경우 무시
+            
+            # wandb.agent() 호출 전 환경 변수 설정 (nohup 등 비-TTY 환경 대응)
+            # nohup으로 실행할 때 TTY가 없어서 wandb가 동작을 변경할 수 있음
+            import os
+            # Python 출력 버퍼링 비활성화 (로그가 즉시 출력되도록)
+            if "PYTHONUNBUFFERED" not in os.environ:
+                os.environ["PYTHONUNBUFFERED"] = "1"
+            # WandB가 TTY 없이도 정상 동작하도록 설정
+            if "WANDB_CONSOLE" not in os.environ:
+                os.environ["WANDB_CONSOLE"] = "wrap"  # TTY 없을 때도 로그 출력
+            # WandB 모드 설정 (offline 모드가 아닌 경우)
+            if "WANDB_MODE" not in os.environ:
+                os.environ["WANDB_MODE"] = "online"  # 명시적으로 online 모드
             
             # wandb.agent() 호출
             # sweep_id 형식: entity/project/sweep_id 또는 project/sweep_id
