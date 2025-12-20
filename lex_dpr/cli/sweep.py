@@ -234,6 +234,12 @@ def _run_sweep_impl(
     
     # 에이전트 자동 실행
     if run_agent:
+        # 스윕 생성 직후 WandB 서버에 완전히 반영되기까지 잠시 대기
+        # (특히 nohup 등 비동기 환경에서 타이밍 이슈 방지)
+        logger.info("")
+        logger.info("⏳ WandB 서버에 스윕이 완전히 반영되기를 기다리는 중... (2초)")
+        time.sleep(2)  # 2초 대기
+        logger.info("✅ 대기 완료")
         logger.info("")
         logger.info("에이전트를 시작합니다...")
         logger.info("")
@@ -1030,7 +1036,6 @@ def _run_agent_impl(
                 logger.warning("wandb.run이 None입니다. wandb.init()을 호출합니다...")
                 try:
                     # nohup 등 비-TTY 환경에서도 정상 동작하도록 설정
-                    import os
                     init_kwargs = {}
                     # TTY가 없을 때도 정상 동작하도록 설정
                     if not sys.stdout.isatty():
@@ -1047,7 +1052,6 @@ def _run_agent_impl(
                             logger.info(f"   나중에 wandb sync로 업로드: wandb sync {wandb_dir}")
                         else:
                             # 기본 위치는 현재 작업 디렉토리의 wandb/ 폴더
-                            import os
                             default_wandb_dir = os.path.join(os.getcwd(), "wandb")
                             logger.info(f"📁 WandB 로컬 저장 위치 (기본): {default_wandb_dir}")
                             logger.info(f"   나중에 wandb sync로 업로드: wandb sync {default_wandb_dir}")
@@ -1261,7 +1265,6 @@ def _run_agent_impl(
             
             # wandb.agent() 호출 전 환경 변수 설정 (nohup 등 비-TTY 환경 대응)
             # nohup으로 실행할 때 TTY가 없어서 wandb가 동작을 변경할 수 있음
-            import os
             # Python 출력 버퍼링 비활성화 (로그가 즉시 출력되도록)
             if "PYTHONUNBUFFERED" not in os.environ:
                 os.environ["PYTHONUNBUFFERED"] = "1"
@@ -1271,6 +1274,86 @@ def _run_agent_impl(
             # WandB 모드 설정 (offline 모드가 아닌 경우)
             if "WANDB_MODE" not in os.environ:
                 os.environ["WANDB_MODE"] = "online"  # 명시적으로 online 모드
+            
+            # wandb.agent() 호출 전 sweep 존재 여부 확인 (404 에러 진단)
+            # 스윕 생성 직후에는 WandB 서버에 완전히 반영되기까지 시간이 걸릴 수 있으므로
+            # 재시도 로직 포함
+            sweep_verified = False
+            max_retries = 3
+            retry_delay = 2  # 초
+            
+            for retry in range(max_retries):
+                try:
+                    api = wandb.Api()
+                    # sweep_id 형식에 따라 다르게 처리
+                    if "/" in sweep_id:
+                        # entity/project/sweep_id 형식
+                        sweep_path = sweep_id
+                    else:
+                        # project/sweep_id 형식으로 변환
+                        if wandb_entity:
+                            sweep_path = f"{wandb_entity}/{wandb_project}/{sweep_id}"
+                        else:
+                            sweep_path = f"{wandb_project}/{sweep_id}"
+                    
+                    if retry > 0:
+                        logger.info(f"🔍 Sweep 확인 재시도 중 ({retry}/{max_retries-1}): {sweep_path}")
+                    else:
+                        logger.info(f"🔍 Sweep 확인 중: {sweep_path}")
+                    
+                    try:
+                        sweep_obj = api.sweep(sweep_path)
+                        logger.info(f"✅ Sweep 확인 완료: {sweep_obj.name or sweep_id}")
+                        logger.info(f"   상태: {getattr(sweep_obj, 'state', 'unknown')}")
+                        sweep_verified = True
+                        break  # 성공하면 루프 종료
+                    except Exception as check_error:
+                        error_msg = str(check_error).lower()
+                        if retry < max_retries - 1:
+                            # 마지막 재시도가 아니면 잠시 대기 후 재시도
+                            if "404" in error_msg or "not found" in error_msg:
+                                logger.debug(f"   Sweep 아직 준비 중... ({retry_delay}초 후 재시도)")
+                                time.sleep(retry_delay)
+                                continue
+                        # 마지막 재시도이거나 404가 아닌 에러면 에러 처리
+                        error_str = str(check_error)
+                        
+                        logger.warning("=" * 80)
+                        logger.warning("⚠️  Sweep 확인 실패")
+                        logger.warning("=" * 80)
+                        
+                        if "404" in error_msg or "not found" in error_msg:
+                            logger.warning(f"   에러 타입: 404 (리소스를 찾을 수 없음)")
+                            logger.warning(f"   Sweep 경로: {sweep_path}")
+                            logger.warning("")
+                            logger.warning("   가능한 원인:")
+                            logger.warning("   1. Sweep이 삭제되었거나 존재하지 않음")
+                            logger.warning("   2. Sweep ID가 잘못됨")
+                            logger.warning("   3. Project 또는 Entity가 일치하지 않음")
+                            logger.warning("   4. WandB 접근 권한 문제 (다른 사용자의 private sweep)")
+                            logger.warning("")
+                            logger.warning("   확인 방법:")
+                            logger.warning(f"   1. WandB 대시보드 확인: https://wandb.ai/{wandb_entity or 'your-entity'}/{wandb_project}/sweeps")
+                            logger.warning("   2. wandb login 상태 확인: wandb login")
+                            logger.warning("   3. 설정 파일의 sweep_id, project, entity 확인")
+                        elif "401" in error_msg or "unauthorized" in error_msg or "permission" in error_msg:
+                            logger.warning(f"   에러 타입: 401 (인증/권한 문제)")
+                            logger.warning("   가능한 원인: WandB 로그인 만료 또는 접근 권한 없음")
+                            logger.warning("   해결 방법: wandb login 재실행")
+                        elif "500" in error_msg or "503" in error_msg or "server" in error_msg:
+                            logger.warning(f"   에러 타입: 서버 에러 ({error_str[:100]})")
+                            logger.warning("   가능한 원인: WandB 서버 일시적 문제")
+                            logger.warning("   해결 방법: 잠시 후 재시도 또는 WandB 상태 확인: https://status.wandb.ai")
+                        else:
+                            logger.warning(f"   에러 타입: 기타 ({error_str[:100]})")
+                        
+                        logger.warning("")
+                        logger.warning("💡 참고: 학습은 계속 진행되며, 로컬에만 저장됩니다.")
+                        logger.warning("   나중에 wandb sync로 업로드할 수 있습니다.")
+                        logger.warning("=" * 80)
+                        logger.warning("")
+                except Exception as api_error:
+                    logger.debug(f"WandB API 확인 중 에러 (무시하고 계속 진행): {api_error}")
             
             # wandb.agent() 호출
             # sweep_id 형식: entity/project/sweep_id 또는 project/sweep_id
