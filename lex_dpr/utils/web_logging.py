@@ -163,7 +163,24 @@ class WebLogger:
                 from pathlib import Path
                 
                 path = Path(local_path)
-                artifact_name = artifact_path or "model"
+                base_artifact_name = artifact_path or "model"
+                
+                # WandB run 이름을 포함하여 아티팩트 이름을 고유하게 만들기
+                # 같은 run 내에서도 여러 번 업로드할 수 있도록 타임스탬프 추가
+                try:
+                    run_name = wandb.run.name if wandb.run else None
+                    if run_name:
+                        # run 이름을 안전한 형식으로 변환 (특수 문자 제거)
+                        safe_run_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in run_name)
+                        artifact_name = f"{base_artifact_name}_{safe_run_name}"
+                    else:
+                        # run 이름이 없으면 타임스탬프 사용
+                        import time
+                        timestamp = int(time.time())
+                        artifact_name = f"{base_artifact_name}_{timestamp}"
+                except Exception:
+                    # run 정보를 가져올 수 없으면 기본 이름 사용
+                    artifact_name = base_artifact_name
                 
                 # 디렉토리인 경우 Artifact 객체 사용
                 if path.is_dir():
@@ -316,4 +333,100 @@ def create_web_logger(cfg) -> Optional[MultiWebLogger]:
         return None
     
     return MultiWebLogger([logger_impl])
+
+
+def upload_artifact_to_existing_run(
+    run_id: str,
+    local_path: str,
+    artifact_path: Optional[str] = None,
+    project: Optional[str] = None,
+    entity: Optional[str] = None,
+    token: Optional[str] = None,
+) -> bool:
+    """
+    기존 WandB run에 artifact를 업로드합니다.
+    
+    Args:
+        run_id: WandB run ID (예: "abc123")
+        local_path: 업로드할 로컬 파일/디렉토리 경로
+        artifact_path: 아티팩트 이름 (기본값: "model")
+        project: WandB 프로젝트 이름 (기본값: run에서 자동 감지)
+        entity: WandB entity 이름 (기본값: run에서 자동 감지)
+        token: WandB API 토큰 (기본값: 환경 변수에서 읽기)
+    
+    Returns:
+        업로드 성공 여부
+    """
+    try:
+        import wandb
+        from pathlib import Path
+    except ImportError:
+        logger.warning("wandb가 설치되지 않았습니다. 'poetry install --extras wandb'로 설치하세요.")
+        return False
+    
+    # WandB 로그인
+    if token:
+        wandb.login(key=token)
+    elif os.getenv("WANDB_API_KEY"):
+        wandb.login(key=os.getenv("WANDB_API_KEY"))
+    else:
+        logger.warning("WandB API 토큰이 제공되지 않았습니다.")
+        return False
+    
+    try:
+        # 방법 1: wandb.init(resume="allow")를 사용하여 run을 resume하고 artifact 업로드
+        # 이 방법이 종료된 run에도 확실하게 작동합니다
+        
+        # run 경로 구성 (init에 필요한 정보)
+        init_kwargs = {
+            "id": run_id,
+            "resume": "allow",  # 종료된 run도 resume 가능
+        }
+        
+        if project:
+            init_kwargs["project"] = project
+        if entity:
+            init_kwargs["entity"] = entity
+        
+        # Run을 resume하여 artifact 업로드
+        with wandb.init(**init_kwargs) as resumed_run:
+            logger.info(f"기존 run을 resume했습니다: {resumed_run.name} (ID: {resumed_run.id})")
+            logger.info(f"Run 상태: {resumed_run.state}")
+            
+            # 아티팩트 이름 설정
+            base_artifact_name = artifact_path or "model"
+            safe_run_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in resumed_run.name)
+            artifact_name = f"{base_artifact_name}_{safe_run_name}"
+            
+            # 아티팩트 생성 및 업로드
+            path = Path(local_path)
+            if not path.exists():
+                logger.warning(f"경로를 찾을 수 없습니다: {local_path}")
+                return False
+            
+            artifact = wandb.Artifact(name=artifact_name, type="model")
+            
+            if path.is_dir():
+                artifact.add_dir(str(path))
+                logger.info(f"디렉토리를 artifact에 추가: {local_path}")
+            elif path.is_file():
+                artifact.add_file(str(path))
+                logger.info(f"파일을 artifact에 추가: {local_path}")
+            else:
+                logger.warning(f"경로가 파일도 디렉토리도 아닙니다: {local_path}")
+                return False
+            
+            # Resume된 run에 artifact 업로드
+            resumed_run.log_artifact(artifact)
+            logger.info(f"✅ 기존 run에 artifact 업로드 완료: {artifact_name}")
+            logger.info(f"   Run: {resumed_run.name} ({resumed_run.id})")
+            logger.info(f"   Artifact: {artifact_name}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"기존 run에 artifact 업로드 실패: {e}")
+        import traceback
+        logger.debug(f"상세 에러: {traceback.format_exc()}")
+        return False
 
