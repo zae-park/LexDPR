@@ -288,16 +288,19 @@ def main():
     
     # 모델 목록 설정 (기본값: 모든 사용 가능한 모델)
     if args.models is None:
-        # ALIASES의 모든 모델 + 주요 모델들
-        default_models = list(ALIASES.keys()) + [
+        # ALIASES의 실제 모델 경로들 + 주요 모델들
+        # ALIASES의 값(실제 경로)을 사용하고, alias는 제외
+        default_models = list(set(ALIASES.values())) + [
             "BAAI/bge-m3",
             "dragonkue/BGE-m3-ko",
             "jhgan/ko-sroberta-multitask",
         ]
         # 중복 제거 및 정렬
         models_to_eval = sorted(list(set(default_models)))
+        print(f"ℹ️  기본 모델 목록 사용: {len(models_to_eval)}개 모델")
     else:
         models_to_eval = args.models
+        print(f"ℹ️  사용자 지정 모델 목록: {len(models_to_eval)}개 모델")
     
     # 경로 설정
     law_src_dir = Path(args.law_src_dir)
@@ -555,8 +558,19 @@ def main():
                         metrics['model_info'] = model_info_dict.get(model, {})
                         all_results[chunk_type][model] = metrics
                         print(f"    ✅ 완료: NDCG@10={metrics.get('val_cosine_ndcg@10', 0):.4f}")
+                else:
+                    print(f"    ⚠️  결과 파일이 생성되지 않았습니다: {result_file}")
             except subprocess.CalledProcessError as e:
                 print(f"    ⚠️  평가 실패: {e}")
+                print(f"    명령어: {' '.join(eval_cmd)}")
+                if e.stdout:
+                    print(f"    stdout: {e.stdout}")
+                if e.stderr:
+                    print(f"    stderr: {e.stderr}")
+            except Exception as e:
+                print(f"    ⚠️  예상치 못한 오류: {e}")
+                import traceback
+                print(f"    상세: {traceback.format_exc()}")
         
         print()
     
