@@ -13,9 +13,10 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Optional, Any
 
 from lex_dpr.utils.io import read_jsonl, write_jsonl
+from lex_dpr.models.factory import ALIASES
 
 
 def run_command(cmd: List[str], check: bool = True) -> subprocess.CompletedProcess:
@@ -27,6 +28,83 @@ def run_command(cmd: List[str], check: bool = True) -> subprocess.CompletedProce
     if result.stderr and result.returncode != 0:
         print(f"에러: {result.stderr}", file=sys.stderr)
     return result
+
+
+def get_model_info(model_name: str) -> Dict[str, Optional[Any]]:
+    """
+    모델의 크기와 max length 정보를 가져옵니다.
+    
+    Returns:
+        dict: {
+            'size_m': 모델 크기 (Million 파라미터),
+            'max_length': 최대 시퀀스 길이,
+            'embedding_dim': 임베딩 차원
+        }
+    """
+    try:
+        from lex_dpr.models.encoders import BiEncoder
+        from sentence_transformers import SentenceTransformer
+        
+        # 모델 이름을 실제 경로로 변환 (alias 처리)
+        real_model_name = ALIASES.get(model_name, model_name)
+        
+        # BiEncoder를 초기화하여 모델 정보 가져오기
+        encoder = BiEncoder(real_model_name, template="bge")
+        
+        # Max length 가져오기
+        max_length = encoder.model.max_seq_length
+        if hasattr(encoder.model, 'tokenizer') and hasattr(encoder.model.tokenizer, 'model_max_length'):
+            original_max_length = encoder.model.tokenizer.model_max_length
+            if original_max_length:
+                max_length = original_max_length
+        
+        # 모델 크기 계산 (파라미터 개수)
+        try:
+            total_params = sum(p.numel() for p in encoder.model.parameters())
+            size_m = total_params / 1_000_000  # Million 단위
+        except:
+            size_m = None
+        
+        # 임베딩 차원 가져오기
+        embedding_dim = None
+        try:
+            # SentenceTransformer의 첫 번째 모듈에서 임베딩 차원 추출
+            if hasattr(encoder.model, 'get_sentence_embedding_dimension'):
+                embedding_dim = encoder.model.get_sentence_embedding_dimension()
+            elif hasattr(encoder.model, '_modules'):
+                for module in encoder.model._modules.values():
+                    if hasattr(module, 'get_sentence_embedding_dimension'):
+                        embedding_dim = module.get_sentence_embedding_dimension()
+                        break
+                    elif hasattr(module, 'config'):
+                        # Transformer 모델의 경우 config에서 가져오기
+                        config = module.config
+                        if hasattr(config, 'hidden_size'):
+                            embedding_dim = config.hidden_size
+                            break
+        except:
+            embedding_dim = None
+        
+        # 메모리 정리
+        del encoder
+        import torch
+        import gc
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        
+        return {
+            'size_m': round(size_m, 2) if size_m else None,
+            'max_length': max_length,
+            'embedding_dim': embedding_dim
+        }
+    except Exception as e:
+        print(f"⚠️  모델 정보 가져오기 실패 ({model_name}): {e}")
+        return {
+            'size_m': None,
+            'max_length': None,
+            'embedding_dim': None
+        }
 
 
 def create_article_level_passages(law_passages_file: Path, output_file: Path):
@@ -106,8 +184,8 @@ def main():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["jhgan/ko-sroberta-multitask", "dragonkue/BGE-m3-ko"],
-        help="평가할 모델 목록 (기본값: jhgan/ko-sroberta-multitask dragonkue/BGE-m3-ko)"
+        default=None,
+        help="평가할 모델 목록 (기본값: 모든 사용 가능한 모델)"
     )
     parser.add_argument(
         "--k-values",
@@ -142,6 +220,19 @@ def main():
     
     args = parser.parse_args()
     
+    # 모델 목록 설정 (기본값: 모든 사용 가능한 모델)
+    if args.models is None:
+        # ALIASES의 모든 모델 + 주요 모델들
+        default_models = list(ALIASES.keys()) + [
+            "BAAI/bge-m3",
+            "dragonkue/BGE-m3-ko",
+            "jhgan/ko-sroberta-multitask",
+        ]
+        # 중복 제거 및 정렬
+        models_to_eval = sorted(list(set(default_models)))
+    else:
+        models_to_eval = args.models
+    
     # 경로 설정
     law_src_dir = Path(args.law_src_dir)
     admin_src_dir = Path(args.admin_src_dir)
@@ -162,7 +253,21 @@ def main():
     print(f"  행정규칙 소스 디렉토리: {admin_src_dir}")
     print(f"  출력 디렉토리: {output_base_dir}")
     print(f"  평가 쌍 파일: {eval_pairs}")
-    print(f"  평가 모델: {args.models}")
+    print(f"  평가 모델 ({len(models_to_eval)}개): {', '.join(models_to_eval)}")
+    print()
+    
+    # 모델 정보 수집
+    print("[0/7] 모델 정보 수집 중...")
+    model_info_dict = {}
+    for model in models_to_eval:
+        print(f"  정보 수집 중: {model}")
+        model_info_dict[model] = get_model_info(model)
+        if model_info_dict[model]['size_m']:
+            print(f"    크기: {model_info_dict[model]['size_m']}M 파라미터")
+        if model_info_dict[model]['max_length']:
+            print(f"    Max Length: {model_info_dict[model]['max_length']}")
+        if model_info_dict[model]['embedding_dim']:
+            print(f"    Embedding Dim: {model_info_dict[model]['embedding_dim']}")
     print()
     
     # 평가 쌍 파일 확인
@@ -323,7 +428,7 @@ def main():
     # ==========================================
     # 4. 각 chunk 단위별로 모델 평가
     # ==========================================
-    print("[4/6] 각 chunk 단위별 모델 평가 시작...")
+    print("[4/7] 각 chunk 단위별 모델 평가 시작...")
     print()
     
     # 평가 결과 저장
@@ -343,7 +448,7 @@ def main():
         
         all_results[chunk_type] = {}
         
-        for model in args.models:
+        for model in models_to_eval:
             model_name = model.replace("/", "_").replace("-", "_")
             result_file = results_dir / f"{chunk_type}_{model_name}.json"
             report_file = results_dir / f"{chunk_type}_{model_name}.txt"
@@ -380,6 +485,8 @@ def main():
                         results = json.load(f)
                         # metrics가 중첩된 경우 처리
                         metrics = results.get('metrics', results)
+                        # 모델 정보 추가
+                        metrics['model_info'] = model_info_dict.get(model, {})
                         all_results[chunk_type][model] = metrics
                         print(f"    ✅ 완료: NDCG@10={metrics.get('val_cosine_ndcg@10', 0):.4f}")
             except subprocess.CalledProcessError as e:
@@ -390,21 +497,26 @@ def main():
     # ==========================================
     # 5. 결과 비교 및 출력
     # ==========================================
-    print("[5/6] 결과 비교 중...")
+    print("[5/7] 결과 비교 중...")
     
     comparison_file = results_dir / "comparison.txt"
     summary_file = results_dir / "summary.txt"
     
     with open(comparison_file, 'w', encoding='utf-8') as f:
-        f.write("=" * 100 + "\n")
+        f.write("=" * 120 + "\n")
         f.write("Passage Chunk 단위별 모델 성능 비교\n")
-        f.write("=" * 100 + "\n\n")
+        f.write("=" * 120 + "\n\n")
         
-        for model in args.models:
+        for model in models_to_eval:
+            model_info = model_info_dict.get(model, {})
+            size_str = f"{model_info.get('size_m', 'N/A')}M" if model_info.get('size_m') else "N/A"
+            max_len_str = str(model_info.get('max_length', 'N/A'))
+            
             f.write(f"\n모델: {model}\n")
-            f.write("-" * 100 + "\n")
-            f.write(f"{'Chunk 단위':<20} {'NDCG@10':<15} {'Recall@10':<15} {'MRR@10':<15} {'Passage 수':<15}\n")
-            f.write("-" * 100 + "\n")
+            f.write(f"  크기: {size_str} 파라미터, Max Length: {max_len_str}\n")
+            f.write("-" * 120 + "\n")
+            f.write(f"{'Chunk 단위':<20} {'NDCG@10':<12} {'Recall@10':<12} {'MRR@10':<12} {'Passage 수':<15} {'Size(M)':<10} {'Max Len':<10}\n")
+            f.write("-" * 120 + "\n")
             
             for chunk_type in ["paragraph", "item", "article"]:
                 if chunk_type in all_results and model in all_results[chunk_type]:
@@ -413,10 +525,48 @@ def main():
                     passage_count = len(list(read_jsonl(corpus_file))) if corpus_file.exists() else 0
                     
                     f.write(f"{chunk_type:<20} "
-                           f"{metrics.get('val_cosine_ndcg@10', 0):<15.4f} "
-                           f"{metrics.get('val_cosine_recall@10', 0):<15.4f} "
-                           f"{metrics.get('val_cosine_mrr@10', 0):<15.4f} "
-                           f"{passage_count:<15,}\n")
+                           f"{metrics.get('val_cosine_ndcg@10', 0):<12.4f} "
+                           f"{metrics.get('val_cosine_recall@10', 0):<12.4f} "
+                           f"{metrics.get('val_cosine_mrr@10', 0):<12.4f} "
+                           f"{passage_count:<15,} "
+                           f"{size_str:<10} "
+                           f"{max_len_str:<10}\n")
+            
+            f.write("\n")
+        
+        # 모델별 비교 테이블 (Chunk 단위별)
+        f.write("\n" + "=" * 120 + "\n")
+        f.write("Chunk 단위별 모델 비교\n")
+        f.write("=" * 120 + "\n\n")
+        
+        for chunk_type in ["paragraph", "item", "article"]:
+            f.write(f"\n[{chunk_type.upper()}]\n")
+            f.write("-" * 120 + "\n")
+            f.write(f"{'모델':<40} {'Size(M)':<10} {'Max Len':<10} {'NDCG@10':<12} {'Recall@10':<12} {'MRR@10':<12}\n")
+            f.write("-" * 120 + "\n")
+            
+            # 성능 순으로 정렬
+            model_scores = []
+            for model in models_to_eval:
+                if chunk_type in all_results and model in all_results[chunk_type]:
+                    metrics = all_results[chunk_type][model]
+                    model_info = model_info_dict.get(model, {})
+                    ndcg = metrics.get('val_cosine_ndcg@10', 0)
+                    model_scores.append((model, model_info, metrics, ndcg))
+            
+            # NDCG@10 기준 내림차순 정렬
+            model_scores.sort(key=lambda x: x[3], reverse=True)
+            
+            for model, model_info, metrics, _ in model_scores:
+                size_str = f"{model_info.get('size_m', 'N/A')}M" if model_info.get('size_m') else "N/A"
+                max_len_str = str(model_info.get('max_length', 'N/A'))
+                
+                f.write(f"{model:<40} "
+                       f"{size_str:<10} "
+                       f"{max_len_str:<10} "
+                       f"{metrics.get('val_cosine_ndcg@10', 0):<12.4f} "
+                       f"{metrics.get('val_cosine_recall@10', 0):<12.4f} "
+                       f"{metrics.get('val_cosine_mrr@10', 0):<12.4f}\n")
             
             f.write("\n")
     
@@ -426,7 +576,7 @@ def main():
         f.write("=" * 80 + "\n\n")
         f.write(f"평가 일시: {__import__('datetime').datetime.now()}\n")
         f.write(f"평가 쌍 파일: {eval_pairs}\n")
-        f.write(f"평가 모델: {', '.join(args.models)}\n\n")
+        f.write(f"평가 모델 ({len(models_to_eval)}개): {', '.join(models_to_eval)}\n\n")
         
         for chunk_type in ["paragraph", "item", "article"]:
             f.write(f"\n{'=' * 80}\n")
@@ -438,19 +588,38 @@ def main():
                 passage_count = len(list(read_jsonl(corpus_file)))
                 f.write(f"Passage 개수: {passage_count:,}\n\n")
             
-            for model in args.models:
+            for model in models_to_eval:
                 if chunk_type in all_results and model in all_results[chunk_type]:
                     metrics = all_results[chunk_type][model]
+                    model_info = model_info_dict.get(model, {})
+                    
                     f.write(f"모델: {model}\n")
+                    if model_info.get('size_m'):
+                        f.write(f"  크기: {model_info['size_m']}M 파라미터\n")
+                    if model_info.get('max_length'):
+                        f.write(f"  Max Length: {model_info['max_length']}\n")
+                    if model_info.get('embedding_dim'):
+                        f.write(f"  Embedding Dim: {model_info['embedding_dim']}\n")
+                    
                     for key in ['val_cosine_ndcg@10', 'val_cosine_recall@10', 'val_cosine_mrr@10']:
                         if key in metrics:
                             f.write(f"  {key}: {metrics[key]:.4f}\n")
                     f.write("\n")
     
     # ==========================================
-    # 6. 최종 요약 출력
+    # 6. 모델 정보 JSON 저장
     # ==========================================
-    print("[6/6] 최종 요약")
+    print("[6/7] 모델 정보 저장 중...")
+    model_info_file = results_dir / "model_info.json"
+    with open(model_info_file, 'w', encoding='utf-8') as f:
+        json.dump(model_info_dict, f, ensure_ascii=False, indent=2)
+    print(f"✅ 모델 정보 저장: {model_info_file}")
+    print()
+    
+    # ==========================================
+    # 7. 최종 요약 출력
+    # ==========================================
+    print("[7/7] 최종 요약")
     print()
     print("=" * 80)
     print("평가 완료!")
