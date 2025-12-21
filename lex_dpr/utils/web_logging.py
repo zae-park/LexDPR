@@ -391,7 +391,12 @@ def upload_artifact_to_existing_run(
         # Run을 resume하여 artifact 업로드
         with wandb.init(**init_kwargs) as resumed_run:
             logger.info(f"기존 run을 resume했습니다: {resumed_run.name} (ID: {resumed_run.id})")
-            logger.info(f"Run 상태: {resumed_run.state}")
+            # Run 상태 확인 (속성이 있을 때만)
+            try:
+                if hasattr(resumed_run, 'state'):
+                    logger.info(f"Run 상태: {resumed_run.state}")
+            except:
+                pass
             
             # 아티팩트 이름 설정
             base_artifact_name = artifact_path or "model"
