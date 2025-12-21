@@ -30,6 +30,72 @@ def run_command(cmd: List[str], check: bool = True) -> subprocess.CompletedProce
     return result
 
 
+def calculate_token_stats(corpus_file: Path, model_name: str = "jhgan/ko-sroberta-multitask") -> Dict[str, Any]:
+    """
+    각 chunk 단위별 토큰 통계를 계산합니다.
+    
+    Returns:
+        dict: {
+            'avg_tokens': 평균 토큰 수,
+            'total_tokens': 전체 토큰 수,
+            'passage_count': passage 개수,
+            'avg_chars': 평균 문자 수
+        }
+    """
+    try:
+        from lex_dpr.models.encoders import BiEncoder
+        
+        # 모델 이름을 실제 경로로 변환 (alias 처리)
+        real_model_name = ALIASES.get(model_name, model_name)
+        
+        # BiEncoder를 초기화하여 토크나이저 가져오기
+        encoder = BiEncoder(real_model_name, template="bge")
+        tokenizer = encoder.model.tokenizer
+        
+        passages = list(read_jsonl(corpus_file))
+        if not passages:
+            return {
+                'avg_tokens': 0,
+                'total_tokens': 0,
+                'passage_count': 0,
+                'avg_chars': 0
+            }
+        
+        total_tokens = 0
+        total_chars = 0
+        
+        for passage in passages:
+            text = passage.get('text', '')
+            total_chars += len(text)
+            
+            # 토큰 수 계산
+            tokens = tokenizer.encode(text, add_special_tokens=False)
+            total_tokens += len(tokens)
+        
+        # 메모리 정리
+        del encoder
+        import torch
+        import gc
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        
+        return {
+            'avg_tokens': total_tokens / len(passages) if passages else 0,
+            'total_tokens': total_tokens,
+            'passage_count': len(passages),
+            'avg_chars': total_chars / len(passages) if passages else 0
+        }
+    except Exception as e:
+        print(f"⚠️  토큰 통계 계산 실패: {e}")
+        return {
+            'avg_tokens': 0,
+            'total_tokens': 0,
+            'passage_count': 0,
+            'avg_chars': 0
+        }
+
+
 def get_model_info(model_name: str) -> Dict[str, Optional[Any]]:
     """
     모델의 크기와 max length 정보를 가져옵니다.
@@ -607,9 +673,75 @@ def main():
                     f.write("\n")
     
     # ==========================================
-    # 6. 모델 정보 JSON 저장
+    # 6. 토큰 통계 계산 및 절약 비율 분석
     # ==========================================
-    print("[6/7] 모델 정보 저장 중...")
+    print("[6/7] 토큰 통계 계산 중...")
+    
+    # 각 chunk 단위별 토큰 통계 계산
+    token_stats = {}
+    reference_model = models_to_eval[0] if models_to_eval else "jhgan/ko-sroberta-multitask"
+    
+    for chunk_type in ["paragraph", "item", "article"]:
+        chunk_dir = output_base_dir / chunk_type
+        corpus_file = chunk_dir / "merged_corpus.jsonl"
+        
+        if corpus_file.exists():
+            print(f"  계산 중: {chunk_type}")
+            token_stats[chunk_type] = calculate_token_stats(corpus_file, reference_model)
+            print(f"    평균 토큰 수: {token_stats[chunk_type]['avg_tokens']:.1f}")
+            print(f"    전체 토큰 수: {token_stats[chunk_type]['total_tokens']:,}")
+            print(f"    Passage 개수: {token_stats[chunk_type]['passage_count']:,}")
+    
+    # 토큰 절약 비율 계산 (article 대비 paragraph)
+    token_savings = {}
+    if "article" in token_stats and "paragraph" in token_stats:
+        article_avg = token_stats["article"]["avg_tokens"]
+        paragraph_avg = token_stats["paragraph"]["avg_tokens"]
+        
+        if article_avg > 0:
+            savings_ratio = (article_avg - paragraph_avg) / article_avg * 100
+            token_savings["article_vs_paragraph"] = {
+                "article_avg_tokens": article_avg,
+                "paragraph_avg_tokens": paragraph_avg,
+                "savings_tokens": article_avg - paragraph_avg,
+                "savings_percentage": savings_ratio
+            }
+            print(f"\n  📊 토큰 절약 분석 (Article vs Paragraph):")
+            print(f"    Article 평균 토큰: {article_avg:.1f}")
+            print(f"    Paragraph 평균 토큰: {paragraph_avg:.1f}")
+            print(f"    절약 토큰: {article_avg - paragraph_avg:.1f} ({savings_ratio:.1f}%)")
+    
+    if "article" in token_stats and "item" in token_stats:
+        article_avg = token_stats["article"]["avg_tokens"]
+        item_avg = token_stats["item"]["avg_tokens"]
+        
+        if article_avg > 0:
+            savings_ratio = (article_avg - item_avg) / article_avg * 100
+            token_savings["article_vs_item"] = {
+                "article_avg_tokens": article_avg,
+                "item_avg_tokens": item_avg,
+                "savings_tokens": article_avg - item_avg,
+                "savings_percentage": savings_ratio
+            }
+            print(f"\n  📊 토큰 절약 분석 (Article vs Item):")
+            print(f"    Article 평균 토큰: {article_avg:.1f}")
+            print(f"    Item 평균 토큰: {item_avg:.1f}")
+            print(f"    절약 토큰: {article_avg - item_avg:.1f} ({savings_ratio:.1f}%)")
+    
+    # 토큰 통계 저장
+    token_stats_file = results_dir / "token_stats.json"
+    with open(token_stats_file, 'w', encoding='utf-8') as f:
+        json.dump({
+            "token_stats": token_stats,
+            "token_savings": token_savings
+        }, f, ensure_ascii=False, indent=2)
+    print(f"\n✅ 토큰 통계 저장: {token_stats_file}")
+    print()
+    
+    # ==========================================
+    # 7. 모델 정보 JSON 저장
+    # ==========================================
+    print("[7/8] 모델 정보 저장 중...")
     model_info_file = results_dir / "model_info.json"
     with open(model_info_file, 'w', encoding='utf-8') as f:
         json.dump(model_info_dict, f, ensure_ascii=False, indent=2)
@@ -617,9 +749,9 @@ def main():
     print()
     
     # ==========================================
-    # 7. 최종 요약 출력
+    # 8. 최종 요약 출력 (토큰 절약 정보 포함)
     # ==========================================
-    print("[7/7] 최종 요약")
+    print("[8/8] 최종 요약")
     print()
     print("=" * 80)
     print("평가 완료!")
@@ -628,7 +760,24 @@ def main():
     print("📊 결과 파일:")
     print(f"  - 요약: {summary_file}")
     print(f"  - 비교: {comparison_file}")
+    print(f"  - 모델 정보: {model_info_file}")
+    print(f"  - 토큰 통계: {token_stats_file}")
     print()
+    
+    # 토큰 절약 정보 출력
+    if token_savings:
+        print("💰 토큰 절약 분석:")
+        if "article_vs_paragraph" in token_savings:
+            savings = token_savings["article_vs_paragraph"]
+            print(f"  Article → Paragraph:")
+            print(f"    절약율: {savings['savings_percentage']:.1f}%")
+            print(f"    절약 토큰: {savings['savings_tokens']:.1f} 토큰/passage")
+        if "article_vs_item" in token_savings:
+            savings = token_savings["article_vs_item"]
+            print(f"  Article → Item:")
+            print(f"    절약율: {savings['savings_percentage']:.1f}%")
+            print(f"    절약 토큰: {savings['savings_tokens']:.1f} 토큰/passage")
+        print()
     print("📈 비교 결과:")
     print()
     with open(comparison_file, 'r', encoding='utf-8') as f:
