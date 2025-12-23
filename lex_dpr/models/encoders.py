@@ -35,8 +35,7 @@ class BiEncoder:
                     "모델 경로를 지정하거나 auto_download=True로 설정하세요."
                 )
         
-        # SentenceTransformer는 PEFT 어댑터가 포함된 체크포인트를 자동으로 로드할 수 있음
-        # adapter_config.json이 있으면 자동으로 감지하여 로드
+        # 모델 경로 확인
         model_path = Path(name_or_path)
         self._model_path = str(model_path) if model_path.exists() else name_or_path  # 모델 경로 저장
         
@@ -63,6 +62,9 @@ class BiEncoder:
         if training_max_len and max_seq_length is None:
             max_seq_length = training_max_len
             print(f"[BiEncoder] 학습 시 사용된 max_len({training_max_len})을 자동으로 적용합니다.")
+        
+        # PEFT 어댑터 우선 확인 (기본값으로 PEFT 사용)
+        # adapter_config.json이 있으면 자동으로 PEFT 어댑터 로드
         if model_path.exists() and (model_path / "adapter_config.json").exists():
             # PEFT 어댑터가 포함된 체크포인트
             print(f"[BiEncoder] Loading model with PEFT adapter from {name_or_path}")
@@ -268,35 +270,32 @@ class BiEncoder:
         Returns:
             모델 경로
         """
-        from .config import DEFAULT_MODEL_PATH, DEFAULT_MAX_LEN
+        from .config import DEFAULT_MODEL_PATH
         
         # 방법 1: 패키지에 포함된 모델 사용
         if DEFAULT_MODEL_PATH:
-            import importlib.resources
             try:
-                # 패키지 내부 리소스로 접근
-                # DEFAULT_MODEL_PATH는 "models/default_model" 같은 상대 경로
-                package_path = importlib.resources.files("lex_dpr")
-                model_path = package_path / DEFAULT_MODEL_PATH
+                # __file__을 사용하여 패키지 설치 경로 찾기
+                # encoders.py의 위치: lex_dpr/models/encoders.py
+                # models 디렉토리: encoders.py의 부모 디렉토리
+                current_file = Path(__file__)  # lex_dpr/models/encoders.py
+                models_dir = current_file.parent  # lex_dpr/models/
                 
-                # 파일 시스템 경로로 변환
-                if hasattr(model_path, '_path'):
-                    # importlib.resources.files()는 Traversable 객체를 반환
-                    # 실제 파일 시스템 경로로 변환
-                    try:
-                        actual_path = Path(str(model_path))
-                    except:
-                        # Traversable 객체인 경우 다른 방법 시도
-                        import os
-                        actual_path = Path(os.path.join(package_path._path if hasattr(package_path, '_path') else str(package_path), DEFAULT_MODEL_PATH))
+                # DEFAULT_MODEL_PATH는 "models/default_model" 형식이므로
+                # "models/" 부분을 제거하고 "default_model"만 사용
+                if DEFAULT_MODEL_PATH.startswith("models/"):
+                    model_dir_name = DEFAULT_MODEL_PATH.replace("models/", "")
                 else:
-                    actual_path = Path(str(model_path))
+                    model_dir_name = DEFAULT_MODEL_PATH
                 
-                if actual_path.exists():
-                    print(f"[BiEncoder] 패키지에 포함된 모델 사용: {actual_path}")
-                    return str(actual_path)
+                # 패키지 내부 모델 경로
+                package_model_path = models_dir / model_dir_name
+                
+                if package_model_path.exists() and (package_model_path / "adapter_config.json").exists():
+                    print(f"[BiEncoder] 패키지에 포함된 PEFT 모델 사용: {package_model_path}")
+                    return str(package_model_path)
                 else:
-                    print(f"[BiEncoder] 패키지 내부 모델 경로를 찾을 수 없습니다: {actual_path}")
+                    print(f"[BiEncoder] 패키지 내부 모델을 찾을 수 없습니다: {package_model_path}")
             except Exception as e:
                 print(f"[BiEncoder] 패키지 내부 모델 로드 실패, WandB 다운로드로 전환: {e}")
                 import traceback

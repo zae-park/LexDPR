@@ -38,14 +38,14 @@ logger = logging.getLogger("lex_dpr.cli.eval")
 
 def _parse_k_values(values: Sequence[str] | None) -> List[int]:
     if not values:
-        return [1, 3, 5, 10]
+        return [1, 3, 5, 10, 20]
     parsed: List[int] = []
     for v in values:
         try:
             parsed.append(int(v))
         except ValueError:
             continue
-    return parsed or [1, 3, 5, 10]
+    return parsed or [1, 3, 5, 10, 20]
 
 
 def _normalize_metric_name(key: str) -> str:
