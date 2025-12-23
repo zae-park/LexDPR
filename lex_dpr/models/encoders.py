@@ -88,17 +88,47 @@ class BiEncoder:
                     t.auto_model = peft_model
                     print(f"[BiEncoder] PEFT adapter loaded from {name_or_path}")
                 except Exception as e:
-                    # safetensors 파일 손상 등의 경우
+                    # safetensors 파일 손상 또는 Git LFS 포인터 파일만 있는 경우
                     error_msg = str(e)
                     if "header too large" in error_msg or "SafetensorError" in error_msg:
-                        raise RuntimeError(
-                            f"모델 파일이 손상되었습니다: {model_path}\n"
-                            f"에러: {error_msg}\n"
-                            f"해결 방법:\n"
-                            f"1. 모델을 다시 다운로드하세요:\n"
-                            f"   python scripts/download_artifact_for_package.py --artifact artifacts/model/model_trim-sweep-12 --output lex_dpr/models/default_model\n"
-                            f"2. 또는 기존 디렉토리를 삭제하고 다시 다운로드하세요"
-                        ) from e
+                        # Git LFS 포인터 파일인지 확인
+                        adapter_file = model_path / "adapter_model.safetensors"
+                        is_lfs_pointer = False
+                        if adapter_file.exists():
+                            try:
+                                with open(adapter_file, 'r', encoding='utf-8') as f:
+                                    content = f.read(100)
+                                    if content.startswith('version https://git-lfs.github.com/spec/v1'):
+                                        is_lfs_pointer = True
+                            except:
+                                pass
+                        
+                        if is_lfs_pointer:
+                            raise RuntimeError(
+                                f"모델 파일이 Git LFS 포인터 파일로만 존재합니다: {model_path}\n"
+                                f"패키지에 포함된 모델이 LFS로 추적되어 실제 파일이 다운로드되지 않았습니다.\n"
+                                f"\n해결 방법:\n"
+                                f"1. WandB에서 자동 다운로드 (권장):\n"
+                                f"   - config.py의 DEFAULT_MODEL_PATH를 None으로 설정하고\n"
+                                f"   - DEFAULT_RUN_ID를 설정하면 첫 실행 시 자동 다운로드됩니다.\n"
+                                f"\n2. 수동으로 모델 다운로드:\n"
+                                f"   python scripts/download_artifact_for_package.py \\\n"
+                                f"     --artifact artifacts/model/model_trim-sweep-12 \\\n"
+                                f"     --output lex_dpr/models/default_model \\\n"
+                                f"     --project lexdpr \\\n"
+                                f"     --entity zae-park\n"
+                                f"\n3. Git LFS로 실제 파일 다운로드 (로컬 개발 환경):\n"
+                                f"   git lfs pull --include='lex_dpr/models/default_model/**'"
+                            ) from e
+                        else:
+                            raise RuntimeError(
+                                f"모델 파일이 손상되었습니다: {model_path}\n"
+                                f"에러: {error_msg}\n"
+                                f"\n해결 방법:\n"
+                                f"1. 모델을 다시 다운로드하세요:\n"
+                                f"   python scripts/download_artifact_for_package.py --artifact artifacts/model/model_trim-sweep-12 --output lex_dpr/models/default_model\n"
+                                f"2. 또는 기존 디렉토리를 삭제하고 다시 다운로드하세요"
+                            ) from e
                     raise
             else:
                 # Base 모델 정보가 없으면 일반 로드 시도

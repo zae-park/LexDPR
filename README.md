@@ -1,17 +1,11 @@
 # 🏛️ LexDPR  
-**구조화되고 계층적인 법령 및 규범 문서를 위한 Dense Passage Retrieval 모델**
 
-LexDPR은 **법령, 규정, 비조치의견서 등과 같은 구조화된 문서**를 대상으로 하는 **Dense Passage Retrieval (DPR)** 모델입니다.  
-조·항·호 단위의 계층적 구조를 가진 문서를 효율적으로 인덱싱하고, 의미적 일관성을 유지하며 검색 성능을 향상시키는 것을 목표로 합니다.
-
-**목표:**
-- 조·항·호 단위의 계층적 구조 문서 효율적 인덱싱
-- 의미적 일관성 유지
-- 검색 성능 향상
+**법령, 규정, 비조치의견서 등과 같은 구조화된 문서**를 대상으로 **Dense Passage Retrieval (DPR)** 모델을 학습합니다.  
+조문·항·호 단위의 계층적 구조를 가진 문서의 분할 및 가공과 의미적 일관성을 유지한 임베딩으로 검색 성능을 향상시킵니다.
 
 ---
 
-## 📘 프로젝트 개요
+## 📘 개요
 
 **기존 상용 임베딩 모델(OpenAI, Cohere, Sentence-Transformers 등)의 문제:**
 
@@ -19,16 +13,15 @@ LexDPR은 **법령, 규정, 비조치의견서 등과 같은 구조화된 문서
 - **법령 문맥 의존성**이 높은 구문 처리의 불안정성  
 - **의미적으로 연결된 문장 간 거리 문제**로 인한 검색 정확도 저하  
 
-**LexDPR의 특징:**
+**LexDPR:**
 
 - 법령 문서 구조에 최적화된 Dense Passage Retrieval 파이프라인
 - RAG 시스템의 중간 검색기(retriever) 역할 수행
 
 ---
 
-## ⚙️ 아키텍처 개요
-
-LexDPR은 구조 인식형(Dense Passage Retrieval with structure-awareness) **듀얼 인코더(Dual Encoder)** 모델입니다.
+LexDPR은 개념적으로 **듀얼 인코더(Dual Encoder)** 모델입니다.
+즉, RAG 파이프라인의 생성기(generator)와 독립적으로 동작하며, **retriever 계층에만 집중**합니다.
 
 ```
 Query Encoder (Sentence-BERT / Legal-BERT)
@@ -45,15 +38,9 @@ Similarity Scoring (dot product / cosine)
   Top-k 구조 단위 검색 결과 출력
 ```
 
-LexDPR은 RAG 파이프라인의 생성기(generator)와 독립적으로 동작하며, **retriever 계층에만 집중**합니다.
-
-**특징:**
-- 생성기(generator)와 독립적 동작
-- Retriever 계층 전용
-
 ---
 
-## 🧩 프로젝트 구조
+## 🧩 프로젝트 구조 (요약약)
 
 ```
 📁 LexDPR/
@@ -79,89 +66,92 @@ LexDPR은 RAG 파이프라인의 생성기(generator)와 독립적으로 동작�
 
 ## 빠른 시작
 
-### 1. 설치
-
-```bash
-# 기본 설치
-pip install .
-
-# 개발 모드 설치 (코드 수정 시 즉시 반영)
-pip install -e .
-
-# 설치 확인
-python -c "from lex_dpr import BiEncoder; print('✅ 설치 성공')"
-```
-
-### 2. 기본 사용법
-
-패키지 설치 후 바로 사용할 수 있습니다. 내장된 PEFT 모델이 자동으로 로드됩니다.
-
 ```python
 from lex_dpr import BiEncoder
 import numpy as np
 
-# 기본 모델 사용 (내장된 PEFT 어댑터 자동 로드)
-# base 모델은 HuggingFace에서 자동 다운로드됩니다
+# 기본 모델 사용
 encoder = BiEncoder()
 
 # 질의 임베딩 생성
-queries = [
-    "법인세 신고 기한은 언제인가요?",
-    "근로기준법상 최저임금은 어떻게 결정되나요?"
-]
+queries = ["통신과금서비스 등록은 어떻게 하나요?"]
 query_embeddings = encoder.encode_queries(queries)
 
 # 패시지 임베딩 생성
-passages = [
-    "법인세는 사업연도 종료일로부터 3개월 이내에 신고하여야 한다.",
-    "최저임금은 근로자의 생계비, 유사직종의 임금 및 노동생산성을 고려하여 결정한다."
-]
+passages = ["1 통신과금서비스를 제공하려는 자는 대통령령으로 정하는 바에 따라 다음 각 호의 사항을 갖추어 과학기술정보통신부장관에게 등록하여야 한다."]
 passage_embeddings = encoder.encode_passages(passages)
 
-# 유사도 계산 (질의-패시지 매칭)
+# 유사도 계산
 from sklearn.metrics.pairwise import cosine_similarity
-similarities = cosine_similarity(query_embeddings, passage_embeddings)
-
-# 가장 유사한 패시지 찾기
-for i, query in enumerate(queries):
-    best_match_idx = np.argmax(similarities[i])
-    print(f"질의: {query}")
-    print(f"매칭된 패시지: {passages[best_match_idx]}")
-    print(f"유사도: {similarities[i][best_match_idx]:.4f}\n")
-```
-
-**출력 예시:**
-```
-[BiEncoder] 패키지에 포함된 PEFT 모델 사용: .../lex_dpr/models/default_model
-[BiEncoder] Loading base model: intfloat/multilingual-e5-small
-[BiEncoder] PEFT adapter loaded from .../lex_dpr/models/default_model
-[BiEncoder] 학습 시 사용된 max_len(384)을 자동으로 적용합니다.
-
-질의: 법인세 신고 기한은 언제인가요?
-매칭된 패시지: 법인세는 사업연도 종료일로부터 3개월 이내에 신고하여야 한다.
-유사도: 0.8523
-
-질의: 근로기준법상 최저임금은 어떻게 결정되나요?
-매칭된 패시지: 최저임금은 근로자의 생계비, 유사직종의 임금 및 노동생산성을 고려하여 결정한다.
-유사도: 0.9145
+similarity = cosine_similarity(query_embeddings, passage_embeddings)[0][0]
+print(f"유사도: {similarity:.4f}")
 ```
 
 ---
 
 ## 사용 예시
 
-### 1. 설치
+### 1. Git LFS 설정
+
+패키지에 포함된 모델 파일은 Git LFS로 관리됩니다. 패키지를 사용하기 전에 Git LFS로 실제 파일을 다운로드해야 합니다.
+
+**Git LFS 설치:**
 
 ```bash
-# 기본 설치
-pip install .
+# Red Hat/CentOS 계열
+sudo yum install -y git-lfs
 
-# 개발 모드 설치 (코드 수정 시 즉시 반영)
-pip install -e .
+# Ubuntu/Debian 계열
+sudo apt-get install -y git-lfs
 
-# 설치 확인
-python -c "from lex_dpr import BiEncoder, TemplateMode; print('✅ 설치 성공')"
+# Git LFS 초기화 (처음 한 번만)
+git lfs install
 ```
+
+**모델 파일 다운로드:**
+
+```bash
+# 모든 LFS 파일 다운로드
+git lfs pull
+
+# 또는 특정 디렉토리만 다운로드
+git lfs pull --include="lex_dpr/models/default_model/**"
+```
+
+**트러블슈팅:**
+
+**`safetensors_rust.SafetensorError: Error while deserializing header: header too large` 에러:**
+
+이 에러는 패키지에 포함된 모델 파일이 Git LFS 포인터 파일로만 존재할 때 발생합니다.
+
+**해결 방법:**
+
+1. **Git LFS로 실제 파일 다운로드:**
+   ```bash
+   # Git LFS 설치 확인
+   git lfs version
+   
+   # Git LFS 초기화 (처음 한 번만)
+   git lfs install
+   
+   # 실제 파일 다운로드
+   git lfs pull
+   ```
+
+2. **특정 디렉토리만 다운로드:**
+   ```bash
+   git lfs pull --include="lex_dpr/models/default_model/**"
+   ```
+
+3. **LFS 파일 확인:**
+   ```bash
+   # LFS로 추적되는 파일 목록 확인
+   git lfs ls-files
+   
+   # 특정 파일이 LFS 포인터인지 확인
+   head -n 1 lex_dpr/models/default_model/adapter_model.safetensors
+   # "version https://git-lfs.github.com/spec/v1"로 시작하면 포인터 파일
+   ```
 
 ### 2. 임베딩 생성
 
@@ -171,7 +161,7 @@ python -c "from lex_dpr import BiEncoder, TemplateMode; print('✅ 설치 성공
 ```python
 from lex_dpr import BiEncoder
 
-# 기본 모델 사용 (내장된 PEFT 어댑터 자동 로드)
+# 기본 모델 사용
 encoder = BiEncoder()
 
 # 질의 임베딩 생성
@@ -201,6 +191,46 @@ encoder = BiEncoder(
 
 #### CLI 방식
 
+**입력 JSONL 파일 형식:**
+
+각 줄은 JSON 객체이며, `id`와 `text` 필드를 포함해야 합니다. 추가 필드는 선택사항입니다.
+
+**질의 파일 예시 (`queries.jsonl`):**
+```jsonl
+{"id": "q1", "text": "통신과금서비스 등록은 어떻게 하나요?"}
+{"id": "q2", "text": "정보통신망법상 통신과금서비스 제공자의 의무는?"}
+{"id": "q3", "text": "통신과금서비스 등록 요건은 무엇인가요?"}
+```
+
+**패시지 파일 예시 (`passages.jsonl`):**
+```jsonl
+{"id": "LAW_000030_제53조_①", "parent_id": "LAW_000030_제53조", "type": "법령", "law_id": "000030", "law_name": "정보통신망 이용촉진 및 정보보호 등에 관한 법률", "article": "제53조", "effective_date": "20251001", "text": "1 통신과금서비스를 제공하려는 자는 대통령령으로 정하는 바에 따라 다음 각 호의 사항을 갖추어 과학기술정보통신부장관에게 등록하여야 한다. <개정 2008.2.29, 2013.3.23, 2017.7.26>"}
+{"id": "LAW_000030_제53조_②", "parent_id": "LAW_000030_제53조", "type": "법령", "law_id": "000030", "law_name": "정보통신망 이용촉진 및 정보보호 등에 관한 법률", "article": "제53조", "effective_date": "20251001", "text": "2 제1항에 따라 등록한 사항을 변경하려는 자는 변경등록을 하여야 한다."}
+{"id": "LAW_000030_제54조_①", "parent_id": "LAW_000030_제54조", "type": "법령", "law_id": "000030", "law_name": "정보통신망 이용촉진 및 정보보호 등에 관한 법률", "article": "제54조", "effective_date": "20251001", "text": "1 통신과금서비스제공자는 이용자의 지급의사 확인, 거래내용의 증빙 및 분쟁조정을 위한 기록을 5년간 보관하여야 한다."}
+```
+
+**기본 모델 사용 (권장):**
+```bash
+# 질의 임베딩 생성
+lex-dpr embed \
+  --model default \
+  --input queries.jsonl \
+  --outdir embeddings \
+  --prefix queries \
+  --type query \
+  --batch-size 64
+
+# 패시지 임베딩 생성
+lex-dpr embed \
+  --model default \
+  --input passages.jsonl \
+  --outdir embeddings \
+  --prefix passages \
+  --type passage \
+  --batch-size 64
+```
+
+**특정 모델 경로 지정:**
 ```bash
 # 질의 임베딩 생성
 lex-dpr embed \
@@ -223,6 +253,19 @@ lex-dpr embed \
   --template bge
 ```
 
+**커스텀 필드명 사용:**
+```bash
+# id 필드가 "doc_id", text 필드가 "content"인 경우
+lex-dpr embed \
+  --model default \
+  --input data.jsonl \
+  --outdir embeddings \
+  --prefix docs \
+  --type passage \
+  --id-field doc_id \
+  --text-field content
+```
+
 **출력 파일 형식:**
 - NPZ 형식 (기본): `{prefix}.npz` (ids와 embeddings 포함)
 - NPY 형식: `{prefix}_ids.npy`, `{prefix}_embeds.npy`
@@ -238,85 +281,6 @@ python scripts/embed_corpus.py \
   --prefix queries \
   --type query
 ```
-
-### 3. max_seq_length vs embedding dimension
-
-두 가지 다른 개념을 구분해야 합니다:
-
-**1. max_seq_length (max_len)**: 입력 텍스트의 최대 토큰 수
-- 모델이 한 번에 처리할 수 있는 입력 텍스트의 최대 길이
-- 예: `max_seq_length=128` → 최대 128개 토큰까지 처리
-- 확인: `encoder.get_max_seq_length()` → 128
-
-**2. embedding dimension**: 출력 벡터의 차원 수
-- 각 텍스트가 변환되는 벡터의 크기
-- 예: `embedding_dim=384` → 384차원 벡터로 변환
-- 모델에 따라 결정: multilingual-e5-small은 384차원
-- 확인: `encoder.get_embedding_dimension()` → 384
-
-**예시:**
-
-```python
-from lex_dpr import BiEncoder
-
-encoder = BiEncoder("checkpoint/lexdpr/bi_encoder")
-print(f"Max seq length: {encoder.get_max_seq_length()}")      # 128 (입력 길이 제한)
-print(f"Embedding dimension: {encoder.get_embedding_dimension()}")  # 384 (출력 벡터 크기)
-
-query_emb = encoder.encode_queries(["질의"])
-print(f"Query shape: {query_emb.shape}")  # (1, 384)
-# - 첫 번째 차원(1): 질의 개수
-# - 두 번째 차원(384): 임베딩 차원 (벡터 크기)
-# - max_seq_length(128)는 입력 텍스트가 128 토큰을 초과하면 잘림
-```
-
-### 4. 고급 사용법
-
-#### Query와 Passage에 서로 다른 최대 길이 설정
-
-```python
-from lex_dpr import BiEncoder, TemplateMode
-
-encoder = BiEncoder(
-    "checkpoint/lexdpr/bi_encoder",
-    template=TemplateMode.BGE,
-    normalize=True,
-    query_max_seq_length=128,  # 질의는 짧게
-    passage_max_seq_length=512,  # 패시지는 길게
-)
-```
-
-#### PEFT 어댑터 사용
-
-```python
-encoder = BiEncoder(
-    "base_model_name",
-    peft_adapter_path="checkpoint/lexdpr/bi_encoder",  # PEFT 어댑터 경로
-)
-```
-
-#### 모델 정보 확인
-
-```python
-# 모델의 현재 max_seq_length 확인
-current_max_len = encoder.get_max_seq_length()
-print(f"현재 모델 max_seq_length: {current_max_len}")
-
-# PEFT 어댑터 설정 확인 (PEFT 모델인 경우)
-training_config = encoder.get_training_config()
-if training_config:
-    print(f"Base 모델: {training_config.get('base_model_name_or_path')}")
-    print(f"LoRA r: {training_config.get('r')}")
-    print(f"LoRA alpha: {training_config.get('lora_alpha')}")
-    print(f"Target modules: {training_config.get('target_modules')}")
-```
-
----
-
-## 📚 추가 문서
-
-- **[모델 학습 가이드](docs/TRAINING.md)**: 데이터 준비, 모델 학습, 하이퍼파라미터 튜닝 등 학습 관련 가이드
-- **[Git LFS 사용 가이드](docs/GIT_LFS_GUIDE.md)**: 모델 체크포인트와 대용량 파일을 Git LFS로 관리하는 방법
 
 ---
 
@@ -364,9 +328,3 @@ if training_config:
 **! 2번 (KoSimCSE+KR-ELECTRA)** 이후 **1번 (KLUE-RoBERTa-bi+KLUE-RoBERTa-large)**
 
 
----
-
-## 📚 추가 문서
-
-- **[모델 학습 가이드](docs/TRAINING.md)**: 데이터 준비, 모델 학습, 하이퍼파라미터 튜닝 등 학습 관련 가이드
-- **[Git LFS 사용 가이드](docs/GIT_LFS_GUIDE.md)**: 모델 체크포인트와 대용량 파일을 Git LFS로 관리하는 방법
