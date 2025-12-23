@@ -77,6 +77,77 @@ LexDPR은 RAG 파이프라인의 생성기(generator)와 독립적으로 동작�
 
 ---
 
+## 빠른 시작
+
+### 1. 설치
+
+```bash
+# 기본 설치
+pip install .
+
+# 개발 모드 설치 (코드 수정 시 즉시 반영)
+pip install -e .
+
+# 설치 확인
+python -c "from lex_dpr import BiEncoder; print('✅ 설치 성공')"
+```
+
+### 2. 기본 사용법
+
+패키지 설치 후 바로 사용할 수 있습니다. 내장된 PEFT 모델이 자동으로 로드됩니다.
+
+```python
+from lex_dpr import BiEncoder
+import numpy as np
+
+# 기본 모델 사용 (내장된 PEFT 어댑터 자동 로드)
+# base 모델은 HuggingFace에서 자동 다운로드됩니다
+encoder = BiEncoder()
+
+# 질의 임베딩 생성
+queries = [
+    "법인세 신고 기한은 언제인가요?",
+    "근로기준법상 최저임금은 어떻게 결정되나요?"
+]
+query_embeddings = encoder.encode_queries(queries)
+
+# 패시지 임베딩 생성
+passages = [
+    "법인세는 사업연도 종료일로부터 3개월 이내에 신고하여야 한다.",
+    "최저임금은 근로자의 생계비, 유사직종의 임금 및 노동생산성을 고려하여 결정한다."
+]
+passage_embeddings = encoder.encode_passages(passages)
+
+# 유사도 계산 (질의-패시지 매칭)
+from sklearn.metrics.pairwise import cosine_similarity
+similarities = cosine_similarity(query_embeddings, passage_embeddings)
+
+# 가장 유사한 패시지 찾기
+for i, query in enumerate(queries):
+    best_match_idx = np.argmax(similarities[i])
+    print(f"질의: {query}")
+    print(f"매칭된 패시지: {passages[best_match_idx]}")
+    print(f"유사도: {similarities[i][best_match_idx]:.4f}\n")
+```
+
+**출력 예시:**
+```
+[BiEncoder] 패키지에 포함된 PEFT 모델 사용: .../lex_dpr/models/default_model
+[BiEncoder] Loading base model: intfloat/multilingual-e5-small
+[BiEncoder] PEFT adapter loaded from .../lex_dpr/models/default_model
+[BiEncoder] 학습 시 사용된 max_len(384)을 자동으로 적용합니다.
+
+질의: 법인세 신고 기한은 언제인가요?
+매칭된 패시지: 법인세는 사업연도 종료일로부터 3개월 이내에 신고하여야 한다.
+유사도: 0.8523
+
+질의: 근로기준법상 최저임금은 어떻게 결정되나요?
+매칭된 패시지: 최저임금은 근로자의 생계비, 유사직종의 임금 및 노동생산성을 고려하여 결정한다.
+유사도: 0.9145
+```
+
+---
+
 ## 사용 예시
 
 ### 1. 설치
@@ -94,25 +165,14 @@ python -c "from lex_dpr import BiEncoder, TemplateMode; print('✅ 설치 성공
 
 ### 2. 임베딩 생성
 
-학습된 모델을 사용하여 질의(query)와 패시지(passage)의 임베딩을 생성합니다.
-
 #### Python API
 
+**기본 사용 (권장):**
 ```python
-from lex_dpr import BiEncoder, TemplateMode
-import numpy as np
+from lex_dpr import BiEncoder
 
-# 기본 모델 사용 (패키지에 포함된 PEFT 어댑터 자동 로드)
-encoder = BiEncoder()  # 또는 BiEncoder("default")
-# 기본 모델은 PEFT 어댑터를 포함하며, base 모델은 HuggingFace에서 자동 다운로드됩니다
-
-# 특정 모델 경로 지정
-encoder = BiEncoder(
-    "checkpoint/lexdpr/bi_encoder",
-    template=TemplateMode.BGE,
-    normalize=True,
-    max_seq_length=512,
-)
+# 기본 모델 사용 (내장된 PEFT 어댑터 자동 로드)
+encoder = BiEncoder()
 
 # 질의 임베딩 생성
 queries = ["법률 질의 텍스트 1", "법률 질의 텍스트 2"]
@@ -125,6 +185,18 @@ passage_embeddings = encoder.encode_passages(passages, batch_size=64)
 # 유사도 계산
 from sklearn.metrics.pairwise import cosine_similarity
 similarities = cosine_similarity(query_embeddings, passage_embeddings)
+```
+
+**특정 모델 경로 지정:**
+```python
+from lex_dpr import BiEncoder, TemplateMode
+
+encoder = BiEncoder(
+    "checkpoint/lexdpr/bi_encoder",
+    template=TemplateMode.BGE,
+    normalize=True,
+    max_seq_length=512,
+)
 ```
 
 #### CLI 방식
