@@ -45,18 +45,44 @@ def download_artifact(
         api = Api()
         
         # Artifact 경로 파싱
-        # 형식: artifacts/model/model_trim-sweep-12 또는 entity/project/artifacts/model/model_trim-sweep-12
-        if "/" in artifact_path and not artifact_path.startswith("artifacts/"):
-            # entity/project/artifacts/... 형식
+        # WandB artifact 경로 형식: entity/project/artifact_name:version
+        # 입력 형식: artifacts/model/model_trim-sweep-12 또는 model_trim-sweep-12
+        
+        # artifacts/ 접두사 제거
+        if artifact_path.startswith("artifacts/"):
+            artifact_path = artifact_path[len("artifacts/"):]
+        
+        # model/ 접두사가 있으면 제거 (artifact 타입은 별도로 지정)
+        artifact_name = artifact_path
+        artifact_type = "model"
+        if "/" in artifact_path:
             parts = artifact_path.split("/")
-            if len(parts) >= 4 and parts[2] == "artifacts":
-                entity = parts[0]
-                project = parts[1]
-                artifact_path = "/".join(parts[2:])
+            if len(parts) >= 2:
+                artifact_type = parts[0]  # 예: "model"
+                artifact_name = "/".join(parts[1:])  # 예: "model_trim-sweep-12"
+        
+        # WandB API 형식: entity/project/artifact_name:version
+        # artifact_name에 버전이 포함되어 있지 않으면 최신 버전 사용
+        full_artifact_path = f"{entity}/{project}/{artifact_name}"
+        
+        # 버전이 명시되지 않았으면 최신 버전 사용
+        if ":" not in artifact_name:
+            full_artifact_path = f"{full_artifact_path}:latest"
+        
+        print(f"   Artifact 경로: {full_artifact_path}")
+        print(f"   Artifact 타입: {artifact_type}")
         
         # Artifact 다운로드
-        print(f"   전체 경로: {entity}/{project}/{artifact_path}")
-        artifact = api.artifact(f"{entity}/{project}/{artifact_path}")
+        try:
+            artifact = api.artifact(full_artifact_path)
+        except Exception as e:
+            # latest가 실패하면 버전 없이 시도
+            if ":latest" in full_artifact_path:
+                print(f"   ⚠️  :latest 버전 실패, 버전 없이 시도...")
+                full_artifact_path = f"{entity}/{project}/{artifact_name}"
+                artifact = api.artifact(full_artifact_path)
+            else:
+                raise
         
         print(f"✅ Artifact 발견: {artifact.name}")
         print(f"   타입: {artifact.type}")
