@@ -20,11 +20,12 @@
 # 패키지에 모델을 포함시킨 경우 이 경로를 설정하세요.
 # 예: "models/default_model" (패키지 내부 상대 경로)
 # 주의: "lex_dpr/" 접두사는 필요 없습니다. 패키지 루트 기준 상대 경로입니다.
-DEFAULT_MODEL_PATH: str | None = None  # 예: "models/default_model"
+DEFAULT_MODEL_PATH: str | None = "models/default_model"  # 패키지에 포함된 모델 경로
 
 # 학습 시 사용된 max_seq_length (패키지에 포함된 모델 또는 WandB 다운로드 모델 모두에 적용)
 # 이 값이 설정되면 BiEncoder가 자동으로 max_seq_length로 사용합니다.
-DEFAULT_MAX_LEN: int | None = None  # 예: 128
+# sweep.yaml에서 model.max_len: 128로 설정되어 있음
+DEFAULT_MAX_LEN: int | None = 128  # 학습 시 사용된 max_seq_length
 
 # 방법 2: WandB에서 자동 다운로드 (DEFAULT_MODEL_PATH가 None인 경우 사용)
 # 기본 WandB Run ID (패키지 배포 시 업데이트)

@@ -36,9 +36,15 @@ def download_artifact(
     print(f"   Project: {project}, Entity: {entity}")
     
     # WandB 로그인 확인
-    if not os.getenv("WANDB_API_KEY"):
+    wandb_api_key = os.getenv("WANDB_API_KEY")
+    if not wandb_api_key:
         print("⚠️  WANDB_API_KEY 환경 변수가 설정되지 않았습니다.")
-        print("   export WANDB_API_KEY=your_api_key")
+        print("\nWindows 환경에서 설정 방법:")
+        print("  CMD:     set WANDB_API_KEY=your_api_key")
+        print("  PowerShell: $env:WANDB_API_KEY=\"your_api_key\"")
+        print("\n또는 WandB 로그인:")
+        print("  poetry run wandb login")
+        print("  또는: python -c \"import wandb; wandb.login()\"")
         return None
     
     try:

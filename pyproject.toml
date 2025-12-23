@@ -6,6 +6,10 @@ authors = ["zae-park <tom941105@gmail.com>"]
 readme = "README.md"
 package-mode = true
 packages = [{include = "lex_dpr"}]
+# 모델 파일 포함 (PEFT 어댑터만 포함)
+include = [
+    { path = "lex_dpr/models/default_model", format = "sdist" },
+]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
