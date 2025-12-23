@@ -576,6 +576,44 @@ if training_config:
 # - 어댑터 크기는 매우 작습니다 (수 MB ~ 수십 MB)
 # - 패키지에 포함 가능한 크기이지만, base 모델은 별도 다운로드 필요
 
+# 4-4. 모델 성능 평가
+# ------------------------
+# 다운로드한 모델의 성능을 평가할 수 있습니다.
+
+# CLI 사용:
+poetry run lex-dpr eval --model lex_dpr/models/default_model
+
+# 또는 Python 스크립트:
+python scripts/evaluate.py --model lex_dpr/models/default_model
+
+# 상세 분석 리포트 생성:
+poetry run lex-dpr eval \
+    --model lex_dpr/models/default_model \
+    --detailed \
+    --report eval_report.txt
+
+# WandB에 결과 로깅:
+poetry run lex-dpr eval \
+    --model lex_dpr/models/default_model \
+    --wandb \
+    --wandb-project lexdpr-eval
+
+# 여러 모델 비교:
+poetry run lex-dpr eval \
+    --compare-models \
+        lex_dpr/models/default_model \
+        checkpoint/lexdpr/bi_encoder \
+    --compare-output model_comparison.txt
+
+# 평가 메트릭:
+# - MRR@k (Mean Reciprocal Rank)
+# - NDCG@k (Normalized Discounted Cumulative Gain)
+# - Recall@k (재현율)
+# - Precision@k (정밀도)
+# - MAP@k (Mean Average Precision)
+
+# 자세한 내용은 docs/EVALUATE_MODEL.md 참고
+
 # 고급 사용법:
 # ------------------------
 # Query와 Passage에 서로 다른 최대 길이 설정
