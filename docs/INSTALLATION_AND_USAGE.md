@@ -237,29 +237,55 @@ python scripts/download_best_model.py \
 
 ## 📏 임베딩 차원 및 시퀀스 길이
 
-### 임베딩 차원 (Embedding Dimension)
+### ⚠️ 중요: max_seq_length vs embedding dimension 구분
 
-**질의와 패시지의 임베딩 차원은 항상 동일합니다.** 같은 모델을 사용하므로 출력 차원이 같습니다.
+두 가지 다른 개념을 혼동하지 마세요:
+
+#### 1. max_seq_length (max_len): 입력 텍스트의 최대 토큰 수
+
+- **의미**: 모델이 한 번에 처리할 수 있는 입력 텍스트의 최대 길이
+- **예**: `max_seq_length=128` → 최대 128개 토큰까지 처리
+- **학습 시 설정**: `configs/sweep.yaml`에서 `model.max_len: 128`
+- **확인**: `encoder.get_max_seq_length()` → `128`
+- **영향**: 입력 텍스트가 이 길이를 초과하면 자동으로 잘림(truncation)
+
+#### 2. embedding dimension: 출력 벡터의 차원 수
+
+- **의미**: 각 텍스트가 변환되는 벡터의 크기
+- **예**: `embedding_dim=384` → 384차원 벡터로 변환
+- **모델에 따라 결정**: `multilingual-e5-small`은 384차원, `ko-simcse`는 768차원
+- **확인**: `encoder.get_embedding_dimension()` → `384`
+- **영향**: 벡터 검색, 유사도 계산 등에 사용
+
+### 실제 사용 예시
 
 ```python
 from lex_dpr import BiEncoder
 
 encoder = BiEncoder("checkpoint/lexdpr/bi_encoder")
 
-# 임베딩 차원 확인
-embedding_dim = encoder.get_embedding_dimension()
-print(f"임베딩 차원: {embedding_dim}")
+# 1. max_seq_length 확인 (입력 길이 제한)
+max_seq_len = encoder.get_max_seq_length()
+print(f"Max seq length: {max_seq_len}")  # 128 (입력 텍스트 최대 토큰 수)
 
-# 실제 임베딩 생성하여 확인
+# 2. embedding dimension 확인 (출력 벡터 크기)
+embedding_dim = encoder.get_embedding_dimension()
+print(f"Embedding dimension: {embedding_dim}")  # 384 (출력 벡터 차원)
+
+# 3. 실제 임베딩 생성
 query_emb = encoder.encode_queries(["질의 텍스트"])
 passage_emb = encoder.encode_passages(["패시지 텍스트"])
 
-print(f"Query embedding shape: {query_emb.shape}")    # (1, embedding_dim)
-print(f"Passage embedding shape: {passage_emb.shape}")  # (1, embedding_dim)
-# 두 shape의 두 번째 차원(임베딩 차원)은 항상 동일합니다.
+print(f"Query embedding shape: {query_emb.shape}")    # (1, 384)
+print(f"Passage embedding shape: {passage_emb.shape}")  # (1, 384)
+
+# 설명:
+# - 첫 번째 차원(1): 텍스트 개수
+# - 두 번째 차원(384): 임베딩 차원 (벡터 크기)
+# - max_seq_length(128)는 입력 텍스트가 128 토큰을 초과하면 잘림
 ```
 
-### 시퀀스 길이 (Sequence Length)
+### 학습 시 사용된 시퀀스 길이
 
 **학습 시 사용된 시퀀스 길이**: `max_len: 128` (configs/model.yaml, configs/sweep.yaml)
 

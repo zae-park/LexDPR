@@ -530,16 +530,32 @@ encoder = BiEncoder(
     template=TemplateMode.BGE,
 )
 
-# 임베딩 차원 확인:
-# 질의와 패시지의 임베딩 차원은 항상 동일합니다 (같은 모델 사용).
-embedding_dim = encoder.get_embedding_dimension()
-print(f"임베딩 차원: {embedding_dim}")  # 예: 768 (ko-simcse의 경우)
+# ⚠️ 중요: max_seq_length vs embedding dimension 구분
+# ------------------------
+# 두 가지 다른 개념을 혼동하지 마세요:
+#
+# 1. max_seq_length (max_len): 입력 텍스트의 최대 토큰 수
+#    - 의미: 모델이 한 번에 처리할 수 있는 입력 텍스트의 최대 길이
+#    - 예: max_seq_length=128 → 최대 128개 토큰까지 처리
+#    - 학습 시 설정: configs/sweep.yaml에서 model.max_len: 128
+#    - 확인: encoder.get_max_seq_length() → 128
+#
+# 2. embedding dimension: 출력 벡터의 차원 수
+#    - 의미: 각 텍스트가 변환되는 벡터의 크기
+#    - 예: embedding_dim=384 → 384차원 벡터로 변환
+#    - 모델에 따라 결정: multilingual-e5-small은 384차원
+#    - 확인: encoder.get_embedding_dimension() → 384
+#
+# 예시:
+encoder = BiEncoder("checkpoint/lexdpr/bi_encoder")
+print(f"Max seq length: {encoder.get_max_seq_length()}")      # 128 (입력 길이 제한)
+print(f"Embedding dimension: {encoder.get_embedding_dimension()}")  # 384 (출력 벡터 크기)
 
-# 실제 확인:
 query_emb = encoder.encode_queries(["질의"])
-passage_emb = encoder.encode_passages(["패시지"])
-print(f"Query shape: {query_emb.shape}")    # (1, 768)
-print(f"Passage shape: {passage_emb.shape}")  # (1, 768) - 차원이 동일함
+print(f"Query shape: {query_emb.shape}")  # (1, 384)
+# - 첫 번째 차원(1): 질의 개수
+# - 두 번째 차원(384): 임베딩 차원 (벡터 크기)
+# - max_seq_length(128)는 입력 텍스트가 128 토큰을 초과하면 잘림
 
 # 다운로드한 모델에서 학습 설정 확인:
 # ------------------------

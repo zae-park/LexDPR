@@ -94,6 +94,29 @@ def download_artifact(
         print(f"   타입: {artifact.type}")
         print(f"   버전: {artifact.version}")
         
+        # Artifact를 생성한 run 정보 가져오기
+        run = None
+        try:
+            # Artifact의 사용된 run 찾기
+            if hasattr(artifact, 'used_by'):
+                used_by = artifact.used_by()
+                if used_by and len(used_by) > 0:
+                    # 사용된 run이 있으면 첫 번째 run 사용
+                    run_id = used_by[0].id if hasattr(used_by[0], 'id') else str(used_by[0])
+                    run = api.run(f"{entity}/{project}/{run_id}")
+                    print(f"   Run 정보 발견: {run.name} (ID: {run.id})")
+            elif hasattr(artifact, 'logged_by'):
+                # 로그한 run 사용
+                logged_by = artifact.logged_by()
+                if logged_by:
+                    run_id = logged_by.id if hasattr(logged_by, 'id') else str(logged_by)
+                    run = api.run(f"{entity}/{project}/{run_id}")
+                    print(f"   Run 정보 발견: {run.name} (ID: {run.id})")
+        except Exception as e:
+            print(f"   ⚠️  Run 정보 가져오기 실패: {e}")
+            import traceback
+            traceback.print_exc()
+        
         # 다운로드
         output_dir.mkdir(parents=True, exist_ok=True)
         artifact_dir = artifact.download(root=str(output_dir))
@@ -121,11 +144,50 @@ def download_artifact(
                 model_dir = artifact_path_obj
                 print(f"   모델 디렉토리: {model_dir} (기본 경로 사용)")
         
-        # training_config.json이 있는지 확인하고, 없으면 생성
+        # training_config.json이 있는지 확인하고, 없으면 WandB run에서 생성
         training_config_path = model_dir / "training_config.json"
-        if not training_config_path.exists():
-            print(f"   ⚠️  training_config.json이 없습니다. 수동으로 설정해야 합니다.")
-            print(f"   config.py의 DEFAULT_MAX_LEN을 설정하세요.")
+        if not training_config_path.exists() and run:
+            try:
+                # Run 정보에서 config 가져오기
+                config = run.config
+                
+                # 학습 시 사용된 max_len 찾기
+                max_len = None
+                if "model" in config and isinstance(config["model"], dict):
+                    max_len = config["model"].get("max_len")
+                elif "max_len" in config:
+                    max_len = config["max_len"]
+                
+                # template 정보 찾기
+                use_bge_template = True
+                if "model" in config and isinstance(config["model"], dict):
+                    use_bge_template = config["model"].get("use_bge_template", True)
+                elif "use_bge_template" in config:
+                    use_bge_template = config["use_bge_template"]
+                
+                # training_config.json 생성
+                import json
+                training_config = {
+                    "max_len": max_len,
+                    "use_bge_template": use_bge_template,
+                    "run_id": run.id,
+                    "run_name": run.name,
+                    "project": run.project,
+                    "entity": run.entity,
+                }
+                
+                with open(training_config_path, "w", encoding="utf-8") as f:
+                    json.dump(training_config, f, indent=2, ensure_ascii=False)
+                
+                print(f"   ✅ training_config.json 생성 완료: {training_config_path}")
+                if max_len:
+                    print(f"   학습 시 사용된 max_len: {max_len}")
+            except Exception as e:
+                print(f"   ⚠️  training_config.json 생성 실패: {e}")
+                print(f"   수동으로 config.py의 DEFAULT_MAX_LEN을 설정하세요.")
+        elif not training_config_path.exists():
+            print(f"   ⚠️  training_config.json이 없고 run 정보도 없습니다.")
+            print(f"   수동으로 config.py의 DEFAULT_MAX_LEN을 설정하세요.")
         
         return model_dir
         

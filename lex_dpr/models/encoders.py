@@ -163,12 +163,11 @@ class BiEncoder:
         # 경고: 설정한 길이가 원래 모델 길이와 다를 때
         final_max_len = self.model.max_seq_length
         if final_max_len > original_model_max_length:
-            print(f"⚠️  경고: 설정한 max_seq_length({final_max_len})가 모델의 원래 길이({original_model_max_length})보다 깁니다.")
-            print(f"   더 긴 시퀀스는 position embeddings가 부족할 수 있어 성능 저하가 발생할 수 있습니다.")
+            print(f"⚠️ : 설정한 max_seq_length({final_max_len}) / 모델의 원래 길이({original_model_max_length})")
+            print(f"   최대 시퀀스 길이는 position embeddings 부족에서 성능 저하가 발생할 수 있습니다.")
             print(f"   권장: {original_model_max_length} 이하로 설정하거나, 모델이 더 긴 길이를 지원하는지 확인하세요.")
         elif final_max_len < original_model_max_length:
-            print(f"ℹ️  정보: 설정한 max_seq_length({final_max_len})가 모델의 원래 길이({original_model_max_length})보다 짧습니다.")
-            print(f"   더 긴 입력은 자동으로 잘립니다(truncation). 이는 일반적으로 문제없습니다.")
+            print(f"ℹ️ : 설정한 max_seq_length({final_max_len}) / 모델의 원래 길이({original_model_max_length})")
         
         # Query/Passage 분리 설정 시 경고
         if query_max_seq_length or passage_max_seq_length:

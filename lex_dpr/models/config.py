@@ -24,8 +24,8 @@ DEFAULT_MODEL_PATH: str | None = "models/default_model"  # 패키지에 포함�
 
 # 학습 시 사용된 max_seq_length (패키지에 포함된 모델 또는 WandB 다운로드 모델 모두에 적용)
 # 이 값이 설정되면 BiEncoder가 자동으로 max_seq_length로 사용합니다.
-# sweep.yaml에서 model.max_len: 128로 설정되어 있음
-DEFAULT_MAX_LEN: int | None = 128  # 학습 시 사용된 max_seq_length
+# model_trim-sweep-12는 max_len=384로 학습됨
+DEFAULT_MAX_LEN: int | None = 384  # 학습 시 사용된 max_seq_length
 
 # 방법 2: WandB에서 자동 다운로드 (DEFAULT_MODEL_PATH가 None인 경우 사용)
 # 기본 WandB Run ID (패키지 배포 시 업데이트)
