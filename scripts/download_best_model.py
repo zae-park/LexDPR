@@ -105,7 +105,7 @@ def download_model_artifact(
     output_dir: Path,
     artifact_name: str = "model",
 ) -> Optional[Path]:
-    """WandB run에서 모델 artifact 다운로드"""
+    """WandB run에서 모델 artifact 다운로드 및 학습 설정 저장"""
     print(f"\n📥 Artifact 다운로드 중...")
     print(f"   Run: {run.name}")
     print(f"   Artifact: {artifact_name}")
@@ -138,9 +138,52 @@ def download_model_artifact(
         # Artifact 다운로드
         output_dir.mkdir(parents=True, exist_ok=True)
         artifact_dir = model_artifact.download(root=str(output_dir))
+        artifact_path = Path(artifact_dir)
+        
+        # 학습 설정 정보 저장 (run config에서 max_len 등 정보 가져오기)
+        try:
+            import json
+            config = run.config
+            
+            # 학습 시 사용된 max_len 찾기
+            max_len = None
+            if "model" in config and isinstance(config["model"], dict):
+                max_len = config["model"].get("max_len")
+            elif "max_len" in config:
+                max_len = config["max_len"]
+            
+            # template 정보 찾기
+            use_bge_template = True  # 기본값
+            if "model" in config and isinstance(config["model"], dict):
+                use_bge_template = config["model"].get("use_bge_template", True)
+            elif "use_bge_template" in config:
+                use_bge_template = config["use_bge_template"]
+            
+            # 학습 설정 정보 저장
+            training_config = {
+                "max_len": max_len,
+                "use_bge_template": use_bge_template,
+                "run_id": run.id,
+                "run_name": run.name,
+                "project": run.project,
+                "entity": run.entity,
+            }
+            
+            # training_config.json 파일로 저장
+            training_config_path = artifact_path / "training_config.json"
+            with open(training_config_path, "w", encoding="utf-8") as f:
+                json.dump(training_config, f, indent=2, ensure_ascii=False)
+            
+            print(f"✅ 학습 설정 정보 저장 완료: {training_config_path}")
+            if max_len:
+                print(f"   학습 시 사용된 max_len: {max_len}")
+            print(f"   BGE 템플릿 사용: {use_bge_template}")
+            
+        except Exception as e:
+            print(f"⚠️  학습 설정 정보 저장 실패 (무시하고 계속): {e}")
         
         print(f"✅ 다운로드 완료: {artifact_dir}")
-        return Path(artifact_dir)
+        return artifact_path
         
     except Exception as e:
         print(f"❌ Artifact 다운로드 실패: {e}")
@@ -255,6 +298,41 @@ def main():
             if target_path.exists():
                 shutil.rmtree(target_path)
             shutil.copytree(checkpoint_path, target_path)
+            
+            # 학습 설정 정보 저장 (로컬 checkpoint인 경우에도)
+            try:
+                import json
+                config = best_run.config
+                max_len = None
+                if "model" in config and isinstance(config["model"], dict):
+                    max_len = config["model"].get("max_len")
+                elif "max_len" in config:
+                    max_len = config["max_len"]
+                
+                use_bge_template = True
+                if "model" in config and isinstance(config["model"], dict):
+                    use_bge_template = config["model"].get("use_bge_template", True)
+                elif "use_bge_template" in config:
+                    use_bge_template = config["use_bge_template"]
+                
+                training_config = {
+                    "max_len": max_len,
+                    "use_bge_template": use_bge_template,
+                    "run_id": best_run.id,
+                    "run_name": best_run.name,
+                    "project": best_run.project,
+                    "entity": best_run.entity,
+                }
+                
+                training_config_path = target_path / "training_config.json"
+                with open(training_config_path, "w", encoding="utf-8") as f:
+                    json.dump(training_config, f, indent=2, ensure_ascii=False)
+                print(f"✅ 학습 설정 정보 저장 완료: {training_config_path}")
+                if max_len:
+                    print(f"   학습 시 사용된 max_len: {max_len}")
+            except Exception as e:
+                print(f"⚠️  학습 설정 정보 저장 실패 (무시하고 계속): {e}")
+            
             print(f"✅ 모델 복사 완료: {target_path}")
         else:
             print(f"⚠️  로컬 checkpoint를 찾을 수 없습니다: {checkpoint_path}")

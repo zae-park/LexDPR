@@ -798,6 +798,132 @@ def visualize_command(
     logger.info(f"✅ 시각화 완료! 결과는 {output_dir_path}에 저장되었습니다.")
 
 
+@app.command("download-model")
+def download_model_command(
+    sweep_id: Optional[str] = typer.Option(None, "--sweep-id", help="WandB Sweep ID (없으면 project의 모든 run 검색)"),
+    project: str = typer.Option("lexdpr", "--project", help="WandB 프로젝트 이름"),
+    entity: str = typer.Option("zae-park", "--entity", help="WandB entity 이름"),
+    metric: str = typer.Option("eval/recall_at_10", "--metric", help="최적화할 메트릭"),
+    goal: str = typer.Option("maximize", "--goal", help="메트릭 최적화 목표 (maximize/minimize)"),
+    output_dir: str = typer.Option("checkpoint/best_model", "--output-dir", help="모델 다운로드 경로"),
+    artifact_name: str = typer.Option("model", "--artifact-name", help="다운로드할 artifact 이름"),
+    use_local_checkpoint: bool = typer.Option(False, "--use-local-checkpoint", help="WandB artifact 대신 로컬 checkpoint 경로 사용"),
+):
+    """
+    WandB에서 학습된 최고 성능 모델 다운로드
+    
+    사용 예시:
+      poetry run lex-dpr download-model
+      poetry run lex-dpr download-model --sweep-id <sweep-id>
+      poetry run lex-dpr download-model --metric eval/ndcg@10 --output-dir checkpoint/my_model
+    """
+    import os
+    from pathlib import Path
+    
+    try:
+        import wandb
+        from wandb import Api
+    except ImportError:
+        logger.error("❌ wandb가 설치되지 않았습니다.")
+        logger.error("설치: poetry install --extras wandb")
+        raise typer.Exit(1)
+    
+    # WandB 로그인 확인
+    if not os.getenv("WANDB_API_KEY"):
+        logger.error("⚠️  WANDB_API_KEY 환경 변수가 설정되지 않았습니다.")
+        logger.error("   export WANDB_API_KEY=your_api_key")
+        raise typer.Exit(1)
+    
+    # download_best_model.py의 함수들을 import하여 사용
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+    from download_best_model import find_best_run, download_model_artifact, get_checkpoint_path_from_run
+    import shutil
+    
+    # 최고 성능 run 찾기
+    best_run = find_best_run(
+        sweep_id=sweep_id,
+        project=project,
+        entity=entity,
+        metric=metric,
+        goal=goal,
+    )
+    
+    if not best_run:
+        logger.error("❌ 최고 성능 run을 찾을 수 없습니다.")
+        raise typer.Exit(1)
+    
+    # 모델 다운로드
+    output_path = Path(output_dir)
+    
+    if use_local_checkpoint:
+        # 로컬 checkpoint 경로 확인
+        checkpoint_path = get_checkpoint_path_from_run(best_run)
+        logger.info(f"📁 로컬 checkpoint 경로: {checkpoint_path}")
+        if Path(checkpoint_path).exists():
+            logger.info(f"✅ 로컬 checkpoint 발견: {checkpoint_path}")
+            # 심볼릭 링크 또는 복사
+            output_path.mkdir(parents=True, exist_ok=True)
+            target_path = output_path / "bi_encoder"
+            if target_path.exists():
+                shutil.rmtree(target_path)
+            shutil.copytree(checkpoint_path, target_path)
+            
+            # 학습 설정 정보 저장 (로컬 checkpoint인 경우에도)
+            try:
+                import json
+                config = best_run.config
+                max_len = None
+                if "model" in config and isinstance(config["model"], dict):
+                    max_len = config["model"].get("max_len")
+                elif "max_len" in config:
+                    max_len = config["max_len"]
+                
+                use_bge_template = True
+                if "model" in config and isinstance(config["model"], dict):
+                    use_bge_template = config["model"].get("use_bge_template", True)
+                elif "use_bge_template" in config:
+                    use_bge_template = config["use_bge_template"]
+                
+                training_config = {
+                    "max_len": max_len,
+                    "use_bge_template": use_bge_template,
+                    "run_id": best_run.id,
+                    "run_name": best_run.name,
+                    "project": best_run.project,
+                    "entity": best_run.entity,
+                }
+                
+                training_config_path = target_path / "training_config.json"
+                with open(training_config_path, "w", encoding="utf-8") as f:
+                    json.dump(training_config, f, indent=2, ensure_ascii=False)
+                logger.info(f"✅ 학습 설정 정보 저장 완료: {training_config_path}")
+                if max_len:
+                    logger.info(f"   학습 시 사용된 max_len: {max_len}")
+            except Exception as e:
+                logger.warning(f"⚠️  학습 설정 정보 저장 실패 (무시하고 계속): {e}")
+            
+            logger.info(f"✅ 모델 복사 완료: {target_path}")
+        else:
+            logger.warning(f"⚠️  로컬 checkpoint를 찾을 수 없습니다: {checkpoint_path}")
+            logger.info("   WandB artifact를 다운로드합니다...")
+            download_model_artifact(best_run, output_path, artifact_name)
+    else:
+        # WandB artifact 다운로드
+        artifact_path = download_model_artifact(best_run, output_path, artifact_name)
+        
+        if artifact_path:
+            logger.info(f"\n✅ 모델 다운로드 완료!")
+            logger.info(f"   경로: {artifact_path}")
+            logger.info(f"\n다음 명령으로 임베딩을 생성할 수 있습니다:")
+            logger.info(f"   poetry run lex-dpr embed \\")
+            logger.info(f"     --model {artifact_path} \\")
+            logger.info(f"     --input data/processed/merged_corpus.jsonl \\")
+            logger.info(f"     --outdir embeds \\")
+            logger.info(f"     --prefix passages \\")
+            logger.info(f"     --type passage")
+
+
 @app.command("gpu")
 def gpu_command(
     action: str = typer.Argument(..., help="동작: list, kill, kill-all"),

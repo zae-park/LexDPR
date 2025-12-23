@@ -115,6 +115,13 @@ poetry install --extras "web-logging"
 # 방법 2: 개발 그룹과 함께 설치 (향후 추가 예정)
 # poetry install --with dev
 
+# 1-1. 설치 확인
+# 패키지가 제대로 설치되었는지 확인:
+python -c "from lex_dpr import BiEncoder, TemplateMode; print('✅ 설치 성공')"
+
+# 또는 테스트 스크립트 실행:
+python test_embedding_import.py
+
 # 2. 설정 파일 초기화
 poetry run lex-dpr config init
 
@@ -133,6 +140,30 @@ poetry run lex-dpr config init
 #    법령, 행정규칙, 판례 JSON을 passage JSONL로 변환합니다.
 #    (preprocess_auto.py는 자동으로 파일 타입을 감지하여 처리합니다)
 #
+# ============================================
+# 📌 Passage 분할 단위 설명
+# ============================================
+# 
+# 각 데이터 타입은 구조적 특성에 따라 다른 단위로 분할됩니다:
+#
+# 1. 법령 (항 단위):
+#    - 구조화된 계층 구조(조문 → 항 → 호)가 명확함
+#    - 항(paragraph) 단위로 passage 생성 (기본값)
+#    - 호(절)가 있으면 항 내용과 호들을 합쳐서 하나의 passage로 생성
+#    - 예: "LAW_000030_제2조_①" (제2조 제1항)
+#    - 호 단위까지 세분화하려면 --include-items 플래그 사용
+#
+# 2. 행정규칙 (조문 단위):
+#    - 항/호 구조 정보가 없거나 덜 명확함
+#    - 조문(article) 단위로 passage 생성
+#    - 예: "ADM_2200000106255_제54조" (제54조 전체)
+#
+# 3. 판례 (청크 단위):
+#    - 구조화된 계층 구조가 없음
+#    - 판결본문을 길이 기반 슬라이딩 윈도우로 청크 분할
+#    - 기본값: 최대 1200자, 오버랩 200자
+#    - 예: "PREC_094864_1", "PREC_094864_2" (같은 판례의 여러 청크)
+#
 poetry run python -m lex_dpr.data_processing.preprocess_auto \
   --src-dir data/laws \
   --out-law data/processed/law_passages.jsonl \
@@ -148,6 +179,13 @@ poetry run python -m lex_dpr.data_processing.preprocess_auto \
   --out-prec data/processed/prec_passages.jsonl \
   --glob "**/*.json"
 
+# 법령을 호 단위까지 세분화하려면 (선택사항):
+# poetry run python -m lex_dpr.data_processing.preprocess_auto \
+#   --src-dir data/laws \
+#   --out-law data/processed/law_passages.jsonl \
+#   --glob "**/*.json" \
+#   --include-items  # 호(절) 단위까지 생성
+
 # 3. Passage 코퍼스 병합 (선택사항, 평가용)
 #    법령과 행정규칙 passage를 하나로 병합합니다.
 poetry run python -m lex_dpr.data_processing.merge_corpus \
@@ -158,6 +196,31 @@ poetry run python -m lex_dpr.data_processing.merge_corpus \
 # 4. 질의-passage 쌍 생성 (train/valid/test split 포함)
 #    - law/admin/precedent passage를 이용해 pairs_train/valid/test를 생성합니다.
 #    - 판례 원본 JSON 디렉토리를 직접 지정할 수도 있습니다 (--prec-json-dir)
+#
+# ============================================
+# 📌 판례 데이터 처리 방식
+# ============================================
+# 
+# 판례는 두 가지 방식으로 처리됩니다:
+#
+# 1. 우선순위: 참조조문에서 법령/행정규칙 매칭
+#    - 판례 JSON의 "참조조문" 필드에서 법령/행정규칙을 파싱
+#    - 예: "[1]형법 제355조 제1항,제356조 / [2]산업안전보건기준에 관한 규칙 제1조"
+#    - 파싱한 법령/행정규칙을 인덱스에서 찾아 positive passage로 사용
+#    - 질의: 판시사항/판결요지 기반 생성
+#    - Positive: 참조조문에서 매칭된 법령/행정규칙 passage
+#    - 예시:
+#      {
+#        "query_text": "위자료 산정이 과소하여 부당하다고 인정된 사례에 대한 법적 판단은?",
+#        "positive_passages": ["LAW_001706_제751조_①", "LAW_001706_제751조_②"],
+#        "meta": {"type": "prec_to_law_admin", "matched_laws": 1, "matched_admin": 0}
+#      }
+#
+# 2. Fallback: 판례 본문 청크 사용
+#    - 참조조문이 없거나 매칭 실패 시
+#    - 판례 본문을 청크로 분할한 passage를 사용
+#    - prec_fallback_passages.jsonl에 저장됨
+#
 poetry run lex-dpr gen-data
 # 또는 판례 원본 JSON 디렉토리를 직접 지정:
 poetry run lex-dpr gen-data \
@@ -317,6 +380,216 @@ poetry run lex-dpr visualize \
   --type space \
   --method tsne \
   --output visualizations
+
+# 4-2. 임베딩 생성 및 사용
+# ============================================
+# 학습된 모델을 사용하여 질의(query)와 패시지(passage)의 임베딩을 생성할 수 있습니다.
+# 
+# 사용 방법:
+# 1. Python API: 코드에서 직접 BiEncoder 클래스 사용
+# 2. CLI: 명령줄에서 배치 임베딩 생성
+# ============================================
+
+# 방법 1: Python API 사용
+# ------------------------
+# 패키지에서 직접 BiEncoder를 import하여 사용할 수 있습니다.
+#
+# ⚠️ 주의: 패키지가 제대로 설치되었는지 먼저 확인하세요:
+#   python -c "from lex_dpr import BiEncoder, TemplateMode; print('✅ 설치 성공')"
+#
+# 예시 코드:
+from lex_dpr import BiEncoder, TemplateMode
+import numpy as np
+
+# 방법 1: 기본 모델 사용 (패키지 배포자가 설정한 모델 자동 다운로드)
+# 사용자는 run ID를 몰라도 됩니다!
+encoder = BiEncoder()  # 또는 BiEncoder("default")
+# 첫 실행 시 WandB에서 자동으로 모델을 다운로드합니다.
+# 이후 실행 시에는 캐시된 모델을 재사용합니다.
+
+# 방법 2: 특정 모델 경로 지정
+encoder = BiEncoder(
+    "checkpoint/lexdpr/bi_encoder",
+    template=TemplateMode.BGE,  # 또는 TemplateMode.NONE
+    normalize=True,  # 임베딩 정규화 (기본값: True)
+    max_seq_length=512,  # 최대 시퀀스 길이
+)
+
+# 질의 임베딩 생성
+queries = [
+    "법률 질의 텍스트 1",
+    "법률 질의 텍스트 2",
+]
+query_embeddings = encoder.encode_queries(queries, batch_size=64)
+print(f"Query embeddings shape: {query_embeddings.shape}")  # (2, embedding_dim)
+
+# 패시지 임베딩 생성
+passages = [
+    "법률 문서 패시지 1",
+    "법률 문서 패시지 2",
+]
+passage_embeddings = encoder.encode_passages(passages, batch_size=64)
+print(f"Passage embeddings shape: {passage_embeddings.shape}")  # (2, embedding_dim)
+
+# 유사도 계산 (cosine similarity)
+from sklearn.metrics.pairwise import cosine_similarity
+similarities = cosine_similarity(query_embeddings, passage_embeddings)
+print(f"Similarity matrix:\n{similarities}")
+
+# 방법 2: CLI 사용 (배치 임베딩 생성)
+# ------------------------
+# JSONL 파일에서 대량의 텍스트를 임베딩으로 변환할 수 있습니다.
+
+# 질의 임베딩 생성
+poetry run lex-dpr embed \
+  --model checkpoint/lexdpr/bi_encoder \
+  --input data/queries.jsonl \
+  --outdir embeddings \
+  --prefix queries \
+  --type query \
+  --batch-size 64 \
+  --template bge
+
+# 패시지 임베딩 생성
+poetry run lex-dpr embed \
+  --model checkpoint/lexdpr/bi_encoder \
+  --input data/processed/law_passages.jsonl \
+  --outdir embeddings \
+  --prefix passages \
+  --type passage \
+  --batch-size 64 \
+  --template bge
+
+# CLI 옵션 설명:
+#   --model: 모델 체크포인트 경로 (필수)
+#   --input: 입력 JSONL 파일 경로 (필수)
+#   --outdir: 임베딩 저장 디렉토리 (필수)
+#   --prefix: 출력 파일 접두사 (예: "queries", "passages") (필수)
+#   --type: 임베딩 타입 ("query" 또는 "passage") (필수)
+#   --id-field: JSONL에서 ID 필드명 (기본값: "id")
+#   --text-field: JSONL에서 텍스트 필드명 (기본값: "text")
+#   --template: 템플릿 모드 ("bge" 또는 "none", 기본값: "bge")
+#   --batch-size: 배치 크기 (기본값: 64)
+#   --max-len: 최대 시퀀스 길이 (0이면 모델 기본값 사용, 기본값: 0)
+#   --device: 디바이스 ("cuda" 또는 "cpu", 기본값: 자동 감지)
+#   --output-format: 출력 형식 ("npz", "npy", "both", 기본값: "npz")
+#   --limit: 인코딩할 행 수 제한 (테스트용, 기본값: None)
+#   --no-normalize: 임베딩 정규화 비활성화
+#   --peft-adapter: PEFT 어댑터 경로 (일반적으로 자동 감지)
+
+# 출력 파일 형식:
+# - NPZ 형식 (기본): {prefix}.npz (ids와 embeddings 포함)
+# - NPY 형식: {prefix}_ids.npy, {prefix}_embeds.npy
+# - both: 두 형식 모두 저장
+
+# 임베딩 로드 예시:
+import numpy as np
+
+# NPZ 형식 로드
+data = np.load("embeddings/queries.npz")
+ids = data["ids"]
+embeddings = data["embeddings"]
+
+# NPY 형식 로드
+ids = np.load("embeddings/queries_ids.npy", allow_pickle=True)
+embeddings = np.load("embeddings/queries_embeds.npy")
+
+# 입력 JSONL 형식 예시:
+# {"id": "query_1", "text": "법률 질의 텍스트"}
+# {"id": "query_2", "text": "다른 질의 텍스트"}
+
+# 학습된 모델 다운로드 (WandB에서)
+# ------------------------
+# WandB에 업로드된 학습된 모델을 다운로드할 수 있습니다.
+
+# 기본 사용 (최고 성능 모델 자동 다운로드)
+poetry run lex-dpr download-model
+
+# 특정 Sweep ID 지정
+poetry run lex-dpr download-model --sweep-id <sweep-id>
+
+# 메트릭 및 출력 경로 지정
+poetry run lex-dpr download-model \
+  --metric eval/ndcg@10 \
+  --output-dir checkpoint/my_model \
+  --project lexdpr \
+  --entity zae-park
+
+# ⚠️ 중요: 학습 설정 자동 적용
+# ------------------------
+# WandB에서 다운로드한 모델은 학습 시 사용된 max_len이 자동으로 적용됩니다.
+# 
+# 다운로드 시:
+#   - run의 config에서 max_len 정보를 읽어서 training_config.json에 저장
+#   - BiEncoder가 모델을 로드할 때 training_config.json이 있으면 자동으로 max_seq_length 적용
+#
+# 수동으로 설정하려면:
+encoder = BiEncoder(
+    "checkpoint/lexdpr/bi_encoder",
+    max_seq_length=128,  # 명시적으로 지정 (training_config.json이 없거나 덮어쓰려는 경우)
+    template=TemplateMode.BGE,
+)
+
+# 임베딩 차원 확인:
+# 질의와 패시지의 임베딩 차원은 항상 동일합니다 (같은 모델 사용).
+embedding_dim = encoder.get_embedding_dimension()
+print(f"임베딩 차원: {embedding_dim}")  # 예: 768 (ko-simcse의 경우)
+
+# 실제 확인:
+query_emb = encoder.encode_queries(["질의"])
+passage_emb = encoder.encode_passages(["패시지"])
+print(f"Query shape: {query_emb.shape}")    # (1, 768)
+print(f"Passage shape: {passage_emb.shape}")  # (1, 768) - 차원이 동일함
+
+# 다운로드한 모델에서 학습 설정 확인:
+# ------------------------
+# 다운로드한 모델의 현재 max_seq_length 확인
+current_max_len = encoder.get_max_seq_length()
+print(f"현재 모델 max_seq_length: {current_max_len}")
+
+# PEFT 어댑터 설정 확인 (PEFT 모델인 경우)
+training_config = encoder.get_training_config()
+if training_config:
+    print(f"Base 모델: {training_config.get('base_model_name_or_path')}")
+    print(f"LoRA r: {training_config.get('r')}")
+    print(f"LoRA alpha: {training_config.get('lora_alpha')}")
+    print(f"Target modules: {training_config.get('target_modules')}")
+
+# ⚠️ 주의: WandB에 저장되는 모델은 PEFT 어댑터만 저장됩니다
+# - Base 모델은 HuggingFace에서 자동으로 다운로드됩니다
+# - 어댑터 크기는 매우 작습니다 (수 MB ~ 수십 MB)
+# - 패키지에 포함 가능한 크기이지만, base 모델은 별도 다운로드 필요
+
+# 고급 사용법:
+# ------------------------
+# Query와 Passage에 서로 다른 최대 길이 설정
+from lex_dpr import BiEncoder, TemplateMode
+
+encoder = BiEncoder(
+    "checkpoint/lexdpr/bi_encoder",
+    template=TemplateMode.BGE,
+    normalize=True,
+    query_max_seq_length=128,  # 질의는 짧게
+    passage_max_seq_length=512,  # 패시지는 길게
+)
+
+# PEFT 어댑터 사용
+encoder = BiEncoder(
+    "base_model_name",
+    peft_adapter_path="checkpoint/lexdpr/bi_encoder",  # PEFT 어댑터 경로
+)
+
+# 임베딩 차원 확인
+embedding_dim = encoder.get_embedding_dimension()
+print(f"임베딩 차원: {embedding_dim}")  # 질의와 패시지 모두 동일한 차원
+
+# ⚠️ 중요: 학습 시 사용한 시퀀스 길이 확인
+# 학습 시 max_len=128로 학습했다면 (configs/model.yaml 확인):
+encoder = BiEncoder(
+    "checkpoint/lexdpr/bi_encoder",
+    max_seq_length=128,  # 학습 시와 동일하게 설정해야 함
+    template=TemplateMode.BGE,  # 학습 시와 동일하게
+)
 
 # 5. 하이퍼파라미터 튜닝 (WandB Sweep)
 # ============================================
