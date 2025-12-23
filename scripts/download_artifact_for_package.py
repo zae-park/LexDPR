@@ -119,8 +119,36 @@ def download_artifact(
         
         # 다운로드
         output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 기존 디렉토리가 있으면 삭제하고 다시 다운로드 (손상된 파일 방지)
+        if output_dir.exists():
+            import shutil
+            print(f"   기존 디렉토리 삭제 중: {output_dir}")
+            shutil.rmtree(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        
         artifact_dir = artifact.download(root=str(output_dir))
         artifact_path_obj = Path(artifact_dir)
+        
+        # 다운로드된 파일 검증
+        print(f"   다운로드된 파일 검증 중...")
+        adapter_file = artifact_path_obj / "adapter_model.safetensors"
+        if adapter_file.exists():
+            file_size = adapter_file.stat().st_size
+            print(f"   adapter_model.safetensors 크기: {file_size / 1024 / 1024:.2f} MB")
+            if file_size < 1024:  # 1KB 미만이면 손상된 것으로 간주
+                raise ValueError(f"파일이 너무 작습니다 (손상 가능성): {file_size} bytes")
+        else:
+            # 하위 디렉토리 확인
+            for subdir in artifact_path_obj.iterdir():
+                if subdir.is_dir():
+                    adapter_file = subdir / "adapter_model.safetensors"
+                    if adapter_file.exists():
+                        file_size = adapter_file.stat().st_size
+                        print(f"   adapter_model.safetensors 크기: {file_size / 1024 / 1024:.2f} MB")
+                        if file_size < 1024:
+                            raise ValueError(f"파일이 너무 작습니다 (손상 가능성): {file_size} bytes")
+                        break
         
         print(f"✅ 다운로드 완료: {artifact_path_obj}")
         

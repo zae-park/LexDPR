@@ -79,11 +79,25 @@ class BiEncoder:
                 # PEFT 어댑터 로드
                 from .peft import _get_st_transformer
                 from peft import PeftModel
-                t = _get_st_transformer(self.model)
-                base_model = t.auto_model
-                peft_model = PeftModel.from_pretrained(base_model, str(model_path))
-                t.auto_model = peft_model
-                print(f"[BiEncoder] PEFT adapter loaded from {name_or_path}")
+                try:
+                    t = _get_st_transformer(self.model)
+                    base_model = t.auto_model
+                    peft_model = PeftModel.from_pretrained(base_model, str(model_path))
+                    t.auto_model = peft_model
+                    print(f"[BiEncoder] PEFT adapter loaded from {name_or_path}")
+                except Exception as e:
+                    # safetensors 파일 손상 등의 경우
+                    error_msg = str(e)
+                    if "header too large" in error_msg or "SafetensorError" in error_msg:
+                        raise RuntimeError(
+                            f"모델 파일이 손상되었습니다: {model_path}\n"
+                            f"에러: {error_msg}\n"
+                            f"해결 방법:\n"
+                            f"1. 모델을 다시 다운로드하세요:\n"
+                            f"   python scripts/download_artifact_for_package.py --artifact artifacts/model/model_trim-sweep-12 --output lex_dpr/models/default_model\n"
+                            f"2. 또는 기존 디렉토리를 삭제하고 다시 다운로드하세요"
+                        ) from e
+                    raise
             else:
                 # Base 모델 정보가 없으면 일반 로드 시도
                 self.model = SentenceTransformer(str(model_path), trust_remote_code=trust_remote_code)
