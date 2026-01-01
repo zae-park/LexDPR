@@ -14,10 +14,15 @@ API 엔드포인트:
   GET /health - 서버 상태 확인
 """
 
+import logging
 import sys
 import warnings
 from pathlib import Path
 from typing import List, Optional
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import torch
@@ -105,9 +110,11 @@ async def health_check():
 async def embed_passage(request: EmbedRequest):
     """Passage 임베딩 생성"""
     if encoder is None:
+        logger.error("[embed/passage] Model not loaded")
         raise HTTPException(status_code=503, detail="Model not loaded")
-    
+
     if not request.texts:
+        logger.error("[embed/passage] texts list cannot be empty")
         raise HTTPException(status_code=400, detail="texts list cannot be empty")
     
     try:
@@ -132,6 +139,7 @@ async def embed_passage(request: EmbedRequest):
             count=len(embeddings_list)
         )
     except Exception as e:
+        logger.error(f"[embed/passage] Embedding generation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Embedding generation failed: {str(e)}")
 
 
@@ -139,27 +147,30 @@ async def embed_passage(request: EmbedRequest):
 async def embed_query(request: EmbedRequest):
     """Query 임베딩 생성"""
     if encoder is None:
+        logger.error("[embed/query] Model not loaded")
         raise HTTPException(status_code=503, detail="Model not loaded")
-    
+
     if not request.texts:
+        logger.error("[embed/query] texts list cannot be empty")
         raise HTTPException(status_code=400, detail="texts list cannot be empty")
-    
+
     try:
         # 임베딩 생성
         embeddings = encoder.encode_queries(
             request.texts,
             batch_size=request.batch_size or 64
         )
-        
+
         # 리스트로 변환
         embeddings_list = embeddings.tolist()
-        
+
         return EmbedResponse(
             embeddings=embeddings_list,
             shape=list(embeddings.shape),
             count=len(embeddings_list)
         )
     except Exception as e:
+        logger.error(f"[embed/query] Embedding generation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Embedding generation failed: {str(e)}")
 
 
