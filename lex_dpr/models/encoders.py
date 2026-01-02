@@ -1,5 +1,5 @@
 # lex_dpr/models/encoders.py
-from typing import Iterable, Optional
+from typing import Iterable, Optional, List, Tuple
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
 import numpy as np
@@ -205,6 +205,16 @@ class BiEncoder:
         else:
             # 설정이 없으면 모델의 원래 길이 사용
             self.model.max_seq_length = int(original_model_max_length)
+        
+        # 토크나이저의 model_max_length도 함께 설정 (truncation 보장)
+        # SentenceTransformer가 내부적으로 토크나이저를 사용하므로 함께 설정 필요
+        if hasattr(self.model, 'tokenizer') and self.model.tokenizer is not None:
+            self.model.tokenizer.model_max_length = self.model.max_seq_length
+        # SentenceTransformer 내부 모듈의 토크나이저도 업데이트
+        if hasattr(self.model, '_modules'):
+            for module in self.model._modules.values():
+                if hasattr(module, 'tokenizer') and module.tokenizer is not None:
+                    module.tokenizer.model_max_length = self.model.max_seq_length
         
         # 경고: 설정한 길이가 원래 모델 길이와 다를 때
         final_max_len = self.model.max_seq_length
@@ -471,42 +481,289 @@ class BiEncoder:
         print(f"[BiEncoder] ✅ 기본 모델 다운로드 완료: {model_dir}")
         return str(model_dir)
 
-    def encode_queries(self, queries: Iterable[str], batch_size=64) -> np.ndarray:
-        """쿼리 임베딩 생성 (추론 모드)"""
+    def _chunk_text_by_tokens(self, text: str, max_tokens: int, overlap_tokens: int = 0) -> List[str]:
+        """
+        텍스트를 토큰 기반으로 chunking합니다.
+        
+        Args:
+            text: 원본 텍스트
+            max_tokens: 최대 토큰 수
+            overlap_tokens: 오버랩 토큰 수 (기본값: 0)
+        
+        Returns:
+            chunk 리스트
+        """
+        if not text or max_tokens <= 0:
+            return [text] if text else []
+        
+        # 토크나이저 가져오기
+        tokenizer = None
+        if hasattr(self.model, 'tokenizer') and self.model.tokenizer is not None:
+            tokenizer = self.model.tokenizer
+        elif hasattr(self.model, '_modules'):
+            for module in self.model._modules.values():
+                if hasattr(module, 'tokenizer') and module.tokenizer is not None:
+                    tokenizer = module.tokenizer
+                    break
+        
+        if tokenizer is None:
+            # 토크나이저를 찾을 수 없으면 원본 텍스트 반환
+            return [text]
+        
+        # 텍스트를 토큰으로 변환
+        tokens = tokenizer.encode(text, add_special_tokens=False)
+        
+        if len(tokens) <= max_tokens:
+            return [text]
+        
+        # 토큰 기반 chunking
+        chunks = []
+        i = 0
+        while i < len(tokens):
+            end = min(i + max_tokens, len(tokens))
+            chunk_tokens = tokens[i:end]
+            
+            # 토큰을 다시 텍스트로 변환
+            chunk_text = tokenizer.decode(chunk_tokens, skip_special_tokens=True)
+            chunks.append(chunk_text)
+            
+            if end >= len(tokens):
+                break
+            
+            # 오버랩 적용
+            i = max(0, end - overlap_tokens)
+        
+        return chunks
+
+    def _encode_with_chunking(self, texts: List[str], max_seq_length: int, batch_size: int, 
+                              is_query: bool = False) -> np.ndarray:
+        """
+        긴 텍스트를 자동으로 chunking하여 임베딩 생성
+        
+        Args:
+            texts: 텍스트 리스트
+            max_seq_length: 최대 시퀀스 길이
+            batch_size: 배치 크기
+            is_query: 쿼리인지 여부 (쿼리는 chunking하지 않음)
+        
+        Returns:
+            임베딩 배열 (각 텍스트당 하나의 임베딩)
+        """
+        if is_query:
+            # 쿼리는 chunking하지 않고 truncation만 적용
+            return self.model.encode(
+                texts,
+                batch_size=batch_size,
+                convert_to_numpy=True,
+                normalize_embeddings=self.normalize,
+                show_progress_bar=False,
+                truncation=True,
+            )
+        
+        # 패시지는 chunking 적용
+        all_embeddings = []
+        for text in texts:
+            # 텍스트가 max_seq_length를 초과하는지 확인
+            chunks = self._chunk_text_by_tokens(text, max_tokens=max_seq_length, overlap_tokens=0)
+            
+            if len(chunks) == 1:
+                # chunking이 필요 없으면 그대로 임베딩
+                embedding = self.model.encode(
+                    [chunks[0]],
+                    batch_size=1,
+                    convert_to_numpy=True,
+                    normalize_embeddings=self.normalize,
+                    show_progress_bar=False,
+                    truncation=True,
+                )[0]
+            else:
+                # 여러 chunk의 임베딩을 생성
+                chunk_embeddings = self.model.encode(
+                    chunks,
+                    batch_size=min(batch_size, len(chunks)),
+                    convert_to_numpy=True,
+                    normalize_embeddings=self.normalize,
+                    show_progress_bar=False,
+                    truncation=True,
+                )
+                # 평균 풀링으로 결합 (가장 일반적인 방법)
+                # 각 chunk의 임베딩을 평균내어 전체 텍스트의 대표 임베딩 생성
+                embedding = chunk_embeddings.mean(axis=0)
+                
+                # 정규화 (평균 후에도 정규화 유지)
+                if self.normalize:
+                    norm = np.linalg.norm(embedding)
+                    if norm > 0:
+                        embedding = embedding / norm
+            
+            all_embeddings.append(embedding)
+        
+        return np.array(all_embeddings)
+
+    def encode_queries(self, queries: Iterable[str], batch_size=64, auto_chunk: Optional[bool] = None) -> np.ndarray:
+        """
+        쿼리 임베딩 생성 (추론 모드)
+        
+        Args:
+            queries: 쿼리 텍스트 리스트
+            batch_size: 배치 크기
+            auto_chunk: 긴 텍스트를 자동으로 chunking할지 여부 
+                       (None이면 max_len을 넘는 텍스트에 대해 자동으로 chunking)
+        """
         # 명시적으로 eval 모드로 설정
         self.model.eval()
         texts = [tq(q, self.template) for q in queries]
         
         # 쿼리 전용 시퀀스 길이 적용
         original_max_seq_length = self.model.max_seq_length
+        original_tokenizer_max_length = None
+        target_length = self.query_max_seq_length if self.query_max_seq_length is not None else self.model.max_seq_length
+        
         if self.query_max_seq_length is not None:
-            self.model.max_seq_length = int(self.query_max_seq_length)
+            target_length = int(self.query_max_seq_length)
+            self.model.max_seq_length = target_length
+            
+            # 토크나이저의 model_max_length도 함께 설정
+            if hasattr(self.model, 'tokenizer') and self.model.tokenizer is not None:
+                original_tokenizer_max_length = getattr(self.model.tokenizer, 'model_max_length', None)
+                self.model.tokenizer.model_max_length = target_length
+            # SentenceTransformer 내부 모듈의 토크나이저도 업데이트
+            if hasattr(self.model, '_modules'):
+                for module in self.model._modules.values():
+                    if hasattr(module, 'tokenizer') and module.tokenizer is not None:
+                        if original_tokenizer_max_length is None:
+                            original_tokenizer_max_length = getattr(module.tokenizer, 'model_max_length', None)
+                        module.tokenizer.model_max_length = target_length
+        
+        # auto_chunk가 None이면 텍스트 길이를 체크하여 자동 결정
+        if auto_chunk is None:
+            # 텍스트 중 하나라도 max_len을 넘는지 확인
+            tokenizer = None
+            if hasattr(self.model, 'tokenizer') and self.model.tokenizer is not None:
+                tokenizer = self.model.tokenizer
+            elif hasattr(self.model, '_modules'):
+                for module in self.model._modules.values():
+                    if hasattr(module, 'tokenizer') and module.tokenizer is not None:
+                        tokenizer = module.tokenizer
+                        break
+            
+            if tokenizer:
+                # 첫 번째 텍스트만 체크 (성능 최적화)
+                if texts:
+                    tokens = tokenizer.encode(texts[0], add_special_tokens=False)
+                    auto_chunk = len(tokens) > target_length
+                else:
+                    auto_chunk = False
+            else:
+                auto_chunk = False
         
         try:
-            result = self.model.encode(texts, batch_size=batch_size, convert_to_numpy=True,
-                                     normalize_embeddings=self.normalize, show_progress_bar=False)
+            if auto_chunk:
+                # auto-chunk 모드: 긴 텍스트를 chunking하여 처리
+                result = self._encode_with_chunking(texts, target_length, batch_size, is_query=True)
+            else:
+                # 기본 모드: truncation만 적용
+                result = self.model.encode(
+                    texts, 
+                    batch_size=batch_size, 
+                    convert_to_numpy=True,
+                    normalize_embeddings=self.normalize, 
+                    show_progress_bar=False,
+                    truncation=True,  # 명시적 truncation 보장
+                )
         finally:
             # 원래 길이로 복원
             self.model.max_seq_length = original_max_seq_length
+            if original_tokenizer_max_length is not None:
+                if hasattr(self.model, 'tokenizer') and self.model.tokenizer is not None:
+                    self.model.tokenizer.model_max_length = original_tokenizer_max_length
+                if hasattr(self.model, '_modules'):
+                    for module in self.model._modules.values():
+                        if hasattr(module, 'tokenizer') and module.tokenizer is not None:
+                            module.tokenizer.model_max_length = original_tokenizer_max_length
         
         return result
 
-    def encode_passages(self, passages: Iterable[str], batch_size=64) -> np.ndarray:
-        """패시지 임베딩 생성 (추론 모드)"""
+    def encode_passages(self, passages: Iterable[str], batch_size=64, auto_chunk: Optional[bool] = None) -> np.ndarray:
+        """
+        패시지 임베딩 생성 (추론 모드)
+        
+        Args:
+            passages: 패시지 텍스트 리스트
+            batch_size: 배치 크기
+            auto_chunk: 긴 텍스트를 자동으로 chunking할지 여부
+                       (None이면 max_len을 넘는 텍스트에 대해 자동으로 chunking)
+        """
         # 명시적으로 eval 모드로 설정
         self.model.eval()
         texts = [tp(p, self.template) for p in passages]
         
         # 패시지 전용 시퀀스 길이 적용
         original_max_seq_length = self.model.max_seq_length
+        original_tokenizer_max_length = None
+        target_length = self.passage_max_seq_length if self.passage_max_seq_length is not None else self.model.max_seq_length
+        
         if self.passage_max_seq_length is not None:
-            self.model.max_seq_length = int(self.passage_max_seq_length)
+            target_length = int(self.passage_max_seq_length)
+            self.model.max_seq_length = target_length
+            
+            # 토크나이저의 model_max_length도 함께 설정
+            if hasattr(self.model, 'tokenizer') and self.model.tokenizer is not None:
+                original_tokenizer_max_length = getattr(self.model.tokenizer, 'model_max_length', None)
+                self.model.tokenizer.model_max_length = target_length
+            # SentenceTransformer 내부 모듈의 토크나이저도 업데이트
+            if hasattr(self.model, '_modules'):
+                for module in self.model._modules.values():
+                    if hasattr(module, 'tokenizer') and module.tokenizer is not None:
+                        if original_tokenizer_max_length is None:
+                            original_tokenizer_max_length = getattr(module.tokenizer, 'model_max_length', None)
+                        module.tokenizer.model_max_length = target_length
+        
+        # auto_chunk가 None이면 텍스트 길이를 체크하여 자동 결정
+        if auto_chunk is None:
+            # 텍스트 중 하나라도 max_len을 넘는지 확인
+            tokenizer = None
+            if hasattr(self.model, 'tokenizer') and self.model.tokenizer is not None:
+                tokenizer = self.model.tokenizer
+            elif hasattr(self.model, '_modules'):
+                for module in self.model._modules.values():
+                    if hasattr(module, 'tokenizer') and module.tokenizer is not None:
+                        tokenizer = module.tokenizer
+                        break
+            
+            if tokenizer:
+                # 첫 번째 텍스트만 체크 (성능 최적화)
+                if texts:
+                    tokens = tokenizer.encode(texts[0], add_special_tokens=False)
+                    auto_chunk = len(tokens) > target_length
+                else:
+                    auto_chunk = False
+            else:
+                auto_chunk = True  # 패시지는 기본적으로 chunking 허용
         
         try:
-            result = self.model.encode(texts, batch_size=batch_size, convert_to_numpy=True,
-                                     normalize_embeddings=self.normalize, show_progress_bar=False)
+            if auto_chunk:
+                # auto-chunk 모드: 긴 텍스트를 chunking하여 처리
+                result = self._encode_with_chunking(texts, target_length, batch_size, is_query=False)
+            else:
+                # 기본 모드: truncation만 적용
+                result = self.model.encode(
+                    texts, 
+                    batch_size=batch_size, 
+                    convert_to_numpy=True,
+                    normalize_embeddings=self.normalize, 
+                    show_progress_bar=False,
+                    truncation=True,  # 명시적 truncation 보장
+                )
         finally:
             # 원래 길이로 복원
             self.model.max_seq_length = original_max_seq_length
+            if original_tokenizer_max_length is not None:
+                if hasattr(self.model, 'tokenizer') and self.model.tokenizer is not None:
+                    self.model.tokenizer.model_max_length = original_tokenizer_max_length
+                if hasattr(self.model, '_modules'):
+                    for module in self.model._modules.values():
+                        if hasattr(module, 'tokenizer') and module.tokenizer is not None:
+                            module.tokenizer.model_max_length = original_tokenizer_max_length
         
         return result
