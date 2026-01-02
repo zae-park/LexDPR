@@ -12,7 +12,7 @@ class BiEncoder:
                  query_max_seq_length: Optional[int] = None,
                  passage_max_seq_length: Optional[int] = None,
                  trust_remote_code: bool = True, peft_adapter_path: Optional[str] = None,
-                 auto_download: bool = True):
+                 auto_download: bool = True, cache_folder: Optional[str] = None):
         """
         Args:
             name_or_path: 모델 경로, HuggingFace 모델 이름, 또는 "default" (기본 모델 자동 다운로드)
@@ -25,6 +25,21 @@ class BiEncoder:
             peft_adapter_path: PEFT 어댑터 경로 (None이면 자동 감지)
             auto_download: name_or_path="default"일 때 자동 다운로드 여부 (기본값: True)
         """
+        # Hugging Face 캐시 경로 결정
+        # 1. cache_folder 파라미터 우선
+        # 2. config.py의 DEFAULT_HF_CACHE_DIR
+        # 3. 환경 변수 (HF_HOME, TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE)
+        # 4. Hugging Face 기본 경로 (~/.cache/huggingface)
+        if cache_folder is None:
+            from .config import DEFAULT_HF_CACHE_DIR
+            if DEFAULT_HF_CACHE_DIR:
+                cache_folder = os.path.expanduser(DEFAULT_HF_CACHE_DIR)
+            else:
+                # 환경 변수 확인
+                cache_folder = os.environ.get("HF_HOME") or \
+                              os.environ.get("TRANSFORMERS_CACHE") or \
+                              os.environ.get("HUGGINGFACE_HUB_CACHE")
+        
         # "default"인 경우 기본 모델 사용 (패키지 포함 모델 우선, 없으면 WandB 다운로드)
         if name_or_path == "default" or name_or_path is None:
             if auto_download:
@@ -77,7 +92,13 @@ class BiEncoder:
             if base_model_name:
                 # Base 모델을 먼저 로드하고 PEFT 어댑터 적용
                 print(f"[BiEncoder] Loading base model: {base_model_name}")
-                self.model = SentenceTransformer(base_model_name, trust_remote_code=trust_remote_code)
+                if cache_folder:
+                    print(f"[BiEncoder] Using Hugging Face cache folder: {cache_folder}")
+                self.model = SentenceTransformer(
+                    base_model_name, 
+                    trust_remote_code=trust_remote_code,
+                    cache_folder=cache_folder
+                )
                 # PEFT 어댑터 로드
                 from .peft import _get_st_transformer
                 from peft import PeftModel
@@ -136,7 +157,13 @@ class BiEncoder:
         elif peft_adapter_path:
             # 별도로 지정된 PEFT 어댑터 경로 (base 모델과 어댑터가 분리된 경우)
             print(f"[BiEncoder] Loading base model {name_or_path} with PEFT adapter from {peft_adapter_path}")
-            self.model = SentenceTransformer(name_or_path, trust_remote_code=trust_remote_code)
+            if cache_folder:
+                print(f"[BiEncoder] Using Hugging Face cache folder: {cache_folder}")
+            self.model = SentenceTransformer(
+                name_or_path, 
+                trust_remote_code=trust_remote_code,
+                cache_folder=cache_folder
+            )
             # SentenceTransformer 내부 모델에 PEFT 적용
             from .peft import _get_st_transformer
             from peft import PeftModel
@@ -149,7 +176,13 @@ class BiEncoder:
                 print(f"[BiEncoder] PEFT adapter loaded from {peft_adapter_path}")
         else:
             # 일반 모델 로드
-            self.model = SentenceTransformer(name_or_path, trust_remote_code=trust_remote_code)
+            if cache_folder:
+                print(f"[BiEncoder] Using Hugging Face cache folder: {cache_folder}")
+            self.model = SentenceTransformer(
+                name_or_path, 
+                trust_remote_code=trust_remote_code,
+                cache_folder=cache_folder
+            )
         
         # 모델의 원래 max_seq_length 확인 (토크나이저의 model_max_length)
         original_model_max_length = getattr(self.model.tokenizer, 'model_max_length', None)

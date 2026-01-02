@@ -39,6 +39,11 @@ DEFAULT_WANDB_ENTITY: str = "zae-park"
 # 기본 다운로드 경로 (사용자 홈 디렉토리 기준)
 DEFAULT_MODEL_CACHE_DIR: str = "~/.lexdpr/models"
 
+# Hugging Face Base 모델 캐시 경로 (None이면 Hugging Face 기본 경로 사용)
+# 환경 변수 HF_HOME, TRANSFORMERS_CACHE, HUGGINGFACE_HUB_CACHE로도 설정 가능
+# LEXDPR 관련 파일을 한 곳에 모으려면 ~/.lexdpr/hf_cache로 설정
+DEFAULT_HF_CACHE_DIR: str | None = "~/.lexdpr/hf_cache"  # LEXDPR 하위에 Base 모델 저장
+
 # 기본 메트릭 (최고 성능 모델 선택 시 사용)
 DEFAULT_METRIC: str = "eval/recall_at_10"
 DEFAULT_GOAL: str = "maximize"
