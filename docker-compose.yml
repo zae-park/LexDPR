@@ -8,11 +8,11 @@ services:
     ports:
       - "8009:8009"
     environment:
-      - MODEL_PATH=/models
+      - MODEL_PATH=/model
       - PORT=8009
       - DEVICE=cuda
     volumes:
-      - /data/LexDPR/LexDPR/lex_dpr/models/default_model:/models
+      - /data/LexDPR/LexDPR/lex_dpr/models/default_model:/model
     deploy:
       resources:
         reservations:
