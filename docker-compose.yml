@@ -11,6 +11,8 @@ services:
       - MODEL_PATH=/model
       - PORT=8009
       - DEVICE=cuda
+    networks:
+      - llm-network
     volumes:
       - /data/LexDPR/LexDPR/lex_dpr/models/default_model:/model
     deploy:
@@ -27,3 +29,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+networks:
+  llm-network:
+    external: true
