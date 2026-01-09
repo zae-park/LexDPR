@@ -1,0 +1,29 @@
+services:
+  lexdpr-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lexdpr-api:latest
+    container_name: lexdpr-api
+    ports:
+      - "8009:8009"
+    environment:
+      - MODEL_PATH=/models
+      - PORT=8009
+      - DEVICE=cuda
+    volumes:
+      - /data/LexDPR/LexDPR/lex_dpr/models/default_model:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

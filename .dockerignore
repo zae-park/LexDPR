@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.eggs
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Virtual environments
+.venv
+venv
+env
+
+# Jupyter
+.ipynb_checkpoints
+
+# Build
+dist
+build
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+htmlcov
+.coverage
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large files (mount these instead)
+*.pt
+*.pth
+*.bin
+*.safetensors
+checkpoint/
+wandb/
+mlruns/
