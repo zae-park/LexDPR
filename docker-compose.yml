@@ -14,7 +14,7 @@ services:
     networks:
       - llm-network
     volumes:
-      - /data/LexDPR/LexDPR/lex_dpr/models/default_model:/model
+      - ./lex_dpr/models/default_model:/model
     deploy:
       resources:
         reservations:
