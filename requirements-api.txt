@@ -1,0 +1,23 @@
+# LexDPR API Server - Minimal Dependencies
+# For embedding API only (no training, no visualization)
+
+# PyTorch (CUDA 12.1) - torch only, no vision/audio
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch>=2.4,<2.6
+
+# Core ML
+transformers>=4.38.0,<4.44.0
+sentence-transformers>=3.0.1,<4.0.0
+accelerate>=0.31.0,<1.0.0
+peft>=0.10.0,<0.11.0
+
+# Tokenizer
+sentencepiece>=0.2.1,<0.3.0
+
+# API Server
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.32.0,<1.0.0
+pydantic>=2.12.0,<3.0.0
+
+# Core utils
+numpy>=1.26.0,<3.0.0
