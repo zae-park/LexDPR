@@ -1037,12 +1037,18 @@ def _run_agent_impl(
                 try:
                     # nohup 등 비-TTY 환경에서도 정상 동작하도록 설정
                     init_kwargs = {}
+                    # WandB 모드는 환경 변수에서 읽거나 기본값 사용
+                    # API_KEY가 없으면 자동으로 offline 모드
+                    wandb_api_key = os.getenv("WANDB_API_KEY")
+                    wandb_mode = os.environ.get("WANDB_MODE", "offline" if not wandb_api_key else "offline")
+                    init_kwargs["mode"] = wandb_mode
+                    
                     # TTY가 없을 때도 정상 동작하도록 설정
                     if not sys.stdout.isatty():
-                        init_kwargs["mode"] = "online"  # 명시적으로 online 모드
                         # 로컬 저장 위치 명시 (nohup으로 실행할 때 경로 문제 방지)
                         if "WANDB_DIR" not in os.environ:
                             init_kwargs["dir"] = os.getcwd()
+                    
                     wandb.init(**init_kwargs)
                     # WandB 로컬 저장 위치 확인 및 로깅
                     if wandb.run:
@@ -1298,9 +1304,26 @@ def _run_agent_impl(
             # WandB가 TTY 없이도 정상 동작하도록 설정
             if "WANDB_CONSOLE" not in os.environ:
                 os.environ["WANDB_CONSOLE"] = "wrap"  # TTY 없을 때도 로그 출력
-            # WandB 모드 설정 (offline 모드가 아닌 경우)
+            # WandB 모드 설정
+            # API_KEY가 없으면 자동으로 offline 모드로 설정
+            # 환경 변수가 이미 설정되어 있으면 그대로 사용
             if "WANDB_MODE" not in os.environ:
-                os.environ["WANDB_MODE"] = "online"  # 명시적으로 online 모드
+                # WANDB_API_KEY 확인
+                wandb_api_key = os.getenv("WANDB_API_KEY")
+                if not wandb_api_key:
+                    # API_KEY가 없으면 자동으로 offline 모드
+                    os.environ["WANDB_MODE"] = "offline"
+                    logger.info("💾 WandB API_KEY가 없습니다. offline 모드로 실행합니다 (로컬에만 저장)")
+                    logger.info("   나중에 업로드하려면: wandb sync <run-directory>")
+                else:
+                    # API_KEY가 있으면 기본값으로 offline 모드 (사용자가 명시적으로 online 설정 가능)
+                    os.environ["WANDB_MODE"] = "offline"
+                    logger.info("💾 WandB 모드: offline (로컬에만 저장, 기본값)")
+                    logger.info("   온라인 모드로 전환하려면: set WANDB_MODE=online")
+                    logger.info("   나중에 업로드하려면: wandb sync <run-directory>")
+            else:
+                wandb_mode = os.environ.get("WANDB_MODE", "offline")
+                logger.info(f"💾 WandB 모드: {wandb_mode} (환경 변수에서 읽음)")
             
             # wandb.agent() 호출 전 sweep 존재 여부 확인 (404 에러 진단)
             # 스윕 생성 직후에는 WandB 서버에 완전히 반영되기까지 시간이 걸릴 수 있으므로
