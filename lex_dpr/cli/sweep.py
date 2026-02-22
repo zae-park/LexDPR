@@ -122,10 +122,186 @@ app = typer.Typer(
 )
 
 
+def _sample_params_local(parameters: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    로컬에서 파라미터 샘플링 (random 방법만 지원)
+    
+    Args:
+        parameters: sweep 설정의 parameters 딕셔너리
+        
+    Returns:
+        샘플링된 파라미터 딕셔너리
+    """
+    import random
+    import math
+    
+    sampled = {}
+    
+    for key, param_config in parameters.items():
+        if isinstance(param_config, dict):
+            # value로 고정된 값
+            if "value" in param_config:
+                sampled[key] = param_config["value"]
+            # values로 categorical 선택
+            elif "values" in param_config:
+                sampled[key] = random.choice(param_config["values"])
+            # distribution으로 연속값 샘플링
+            elif "distribution" in param_config:
+                dist = param_config["distribution"]
+                if dist == "uniform":
+                    min_val = param_config.get("min", 0.0)
+                    max_val = param_config.get("max", 1.0)
+                    sampled[key] = random.uniform(min_val, max_val)
+                elif dist == "log_uniform_values":
+                    min_val = param_config.get("min", 1e-6)
+                    max_val = param_config.get("max", 1.0)
+                    # log space에서 uniform 샘플링
+                    log_min = math.log10(min_val)
+                    log_max = math.log10(max_val)
+                    log_val = random.uniform(log_min, log_max)
+                    sampled[key] = 10 ** log_val
+                else:
+                    # 지원하지 않는 distribution은 기본값 사용
+                    if "min" in param_config and "max" in param_config:
+                        sampled[key] = random.uniform(param_config["min"], param_config["max"])
+                    else:
+                        sampled[key] = param_config.get("value", 0.0)
+            else:
+                # 알 수 없는 형식은 value가 있으면 사용
+                sampled[key] = param_config.get("value", 0.0)
+        else:
+            # 단순 값
+            sampled[key] = param_config
+    
+    return sampled
+
+
+def _build_param_space(parameters: Dict[str, Any]) -> list:
+    """탐색 가능한 파라미터만 (key, type, bounds_or_values) 리스트로 반환. 'value' 고정은 제외."""
+    space = []
+    for key, param_config in parameters.items():
+        if not isinstance(param_config, dict):
+            continue
+        if "value" in param_config:
+            continue
+        if "values" in param_config:
+            space.append((key, "categorical", list(param_config["values"])))
+        elif param_config.get("distribution") == "log_uniform_values":
+            mn = float(param_config.get("min", 1e-6))
+            mx = float(param_config.get("max", 1.0))
+            import math
+            space.append((key, "log_continuous", (math.log10(mn), math.log10(mx))))
+        elif param_config.get("distribution") == "uniform" or "min" in param_config:
+            mn = float(param_config.get("min", 0.0))
+            mx = float(param_config.get("max", 1.0))
+            space.append((key, "continuous", (mn, mx)))
+    return space
+
+
+def _params_to_vector(params_dict: Dict[str, Any], param_space: list) -> Any:
+    """파라미터 딕셔너리를 고정 길이 실수 벡터로 인코딩 (GP 입력용)."""
+    import numpy as np
+    vec = []
+    for key, typ, bounds_or_values in param_space:
+        v = params_dict.get(key)
+        if typ == "categorical":
+            try:
+                idx = list(bounds_or_values).index(v)
+            except (ValueError, TypeError):
+                idx = 0
+            vec.append(float(idx))
+        elif typ == "log_continuous":
+            import math
+            x = float(v) if v is not None else (bounds_or_values[0] + bounds_or_values[1]) / 2
+            vec.append(math.log10(max(x, 1e-10)))
+        else:
+            vec.append(float(v) if v is not None else (bounds_or_values[0] + bounds_or_values[1]) / 2)
+    return np.array(vec, dtype=np.float64).reshape(1, -1)
+
+
+def _vector_to_params(vec: Any, param_space: list) -> Dict[str, Any]:
+    """벡터를 파라미터 딕셔너리로 디코딩."""
+    params = {}
+    for i, (key, typ, bounds_or_values) in enumerate(param_space):
+        x = float(vec.flat[i])
+        if typ == "categorical":
+            vals = list(bounds_or_values)
+            idx = max(0, min(int(round(x)), len(vals) - 1))
+            params[key] = vals[idx]
+        elif typ == "log_continuous":
+            params[key] = 10 ** x
+        else:
+            lo, hi = bounds_or_values
+            params[key] = float(max(lo, min(x, hi)))
+    return params
+
+
+def _suggest_next_bayes(
+    parameters: Dict[str, Any],
+    param_space: list,
+    history: list,
+    goal: str,
+    n_initial: int = 5,
+    n_candidates: int = 200,
+) -> Dict[str, Any]:
+    """
+    이력 기반으로 다음 설정 추천 (GP + Expected Improvement). 추가 의존성 없이 sklearn+numpy 사용.
+    history: [(params_dict, metric), ...]
+    goal: "maximize" or "minimize"
+    """
+    import random
+    import numpy as np
+    from scipy.stats import norm
+
+    if len(history) < n_initial:
+        return _sample_params_local(parameters)
+
+    try:
+        from sklearn.gaussian_process import GaussianProcessRegressor
+        from sklearn.gaussian_process.kernels import RBF, WhiteKernel
+    except ImportError:
+        return _sample_params_local(parameters)
+
+    X_list = []
+    y_list = []
+    for params_dict, metric in history:
+        if metric is None:
+            continue
+        try:
+            x = _params_to_vector(params_dict, param_space)
+            X_list.append(x.ravel())
+            y_list.append(float(metric))
+        except Exception:
+            continue
+
+    if len(y_list) < n_initial:
+        return _sample_params_local(parameters)
+
+    X = np.array(X_list)
+    y = np.array(y_list)
+    if goal == "minimize":
+        y = -y
+
+    kernel = RBF(length_scale=1.0) + WhiteKernel(noise_level=0.1)
+    gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=4, alpha=1e-6)
+    gp.fit(X, y)
+
+    y_best = float(np.max(y))
+    candidates = [_sample_params_local(parameters) for _ in range(n_candidates)]
+    X_cand = np.vstack([_params_to_vector(p, param_space) for p in candidates])
+    mu, std = gp.predict(X_cand, return_std=True)
+    std = np.maximum(std, 1e-6)
+    z = (mu - y_best) / std
+    ei = (mu - y_best) * norm.cdf(z) + std * norm.pdf(z)
+    best_idx = int(np.argmax(ei))
+    return candidates[best_idx]
+
+
 def _run_sweep_impl(
     config_path: Path,
     smoke_test: bool,
     run_agent: bool,
+    force_local: bool = False,
 ):
     """sweep 실행 로직 (재사용)"""
     try:
@@ -190,34 +366,64 @@ def _run_sweep_impl(
     logger.info(f"  - 고정 파라미터 수: {len(fixed_params)}")
     logger.info("")
     
-    try:
-        import sys
-        logger.info("WandB API에 연결 중...")
-        sys.stdout.flush()  # 강제 출력
-        
-        sweep_id = wandb.sweep(sweep_dict, project=wandb_project, entity=wandb_entity)
-        
+    # 로컬 모드 플래그
+    is_local_mode = force_local
+    
+    if force_local:
+        logger.info("💾 로컬 모드 강제 활성화 (네트워크 연결 없이 실행)")
         logger.info("")
-        logger.info(f"✅ WandB API 호출 완료")
-        logger.info(f"   스윕 ID: {sweep_id}")
-        sys.stdout.flush()
-    except Exception as e:
-        logger.error("")
-        logger.error(f"❌ WandB 스윕 생성 실패!")
-        logger.error(f"   에러 타입: {type(e).__name__}")
-        logger.error(f"   에러 메시지: {str(e)}")
-        logger.error("")
-        logger.error("가능한 원인:")
-        logger.error("  1. WandB 설정 파일 스키마 오류 (위 경고 확인)")
-        logger.error("  2. 네트워크 연결 문제")
-        logger.error("  3. WandB 인증 문제 (wandb login 확인)")
-        logger.error("")
-        raise
+        sweep_id = f"local-{int(time.time())}"
+    else:
+        try:
+            import sys
+            logger.info("WandB API에 연결 중...")
+            sys.stdout.flush()  # 강제 출력
+            
+            sweep_id = wandb.sweep(sweep_dict, project=wandb_project, entity=wandb_entity)
+            
+            logger.info("")
+            logger.info(f"✅ WandB API 호출 완료")
+            logger.info(f"   스윕 ID: {sweep_id}")
+            sys.stdout.flush()
+        except Exception as e:
+            # 네트워크 연결 실패 시 로컬 모드로 전환
+            error_msg = str(e).lower()
+            is_network_error = (
+                "connection" in error_msg or 
+                "timeout" in error_msg or 
+                "network" in error_msg or
+                "unreachable" in error_msg or
+                "refused" in error_msg
+            )
+            
+            if is_network_error:
+                logger.warning("")
+                logger.warning("⚠️  WandB 서버 연결 실패 - 로컬 모드로 전환합니다")
+                logger.warning(f"   에러: {str(e)[:100]}")
+                logger.warning("")
+                is_local_mode = True
+                # 로컬 모드용 가짜 sweep_id 생성
+                sweep_id = f"local-{int(time.time())}"
+            else:
+                logger.error("")
+                logger.error(f"❌ WandB 스윕 생성 실패!")
+                logger.error(f"   에러 타입: {type(e).__name__}")
+                logger.error(f"   에러 메시지: {str(e)}")
+                logger.error("")
+                logger.error("가능한 원인:")
+                logger.error("  1. WandB 설정 파일 스키마 오류 (위 경고 확인)")
+                logger.error("  2. 네트워크 연결 문제")
+                logger.error("  3. WandB 인증 문제 (wandb login 확인)")
+                logger.error("")
+                raise
     
     # 스윕 ID를 설정 파일에 저장
     sweep_config["sweep_id"] = sweep_id
+    sweep_config["_local_mode"] = is_local_mode  # 로컬 모드 플래그 저장
     OmegaConf.save(sweep_config, config_path)
     logger.info(f"스윕 ID가 설정 파일에 저장되었습니다: {config_path}")
+    if is_local_mode:
+        logger.info("💾 로컬 모드: 네트워크 없이 로컬에서만 실행됩니다")
     
     logger.info("")
     logger.info("=" * 80)
@@ -234,13 +440,14 @@ def _run_sweep_impl(
     
     # 에이전트 자동 실행
     if run_agent:
-        # 스윕 생성 직후 WandB 서버에 완전히 반영되기까지 잠시 대기
-        # (특히 nohup 등 비동기 환경에서 타이밍 이슈 방지)
-        logger.info("")
-        logger.info("⏳ WandB 서버에 스윕이 완전히 반영되기를 기다리는 중... (2초)")
-        time.sleep(2)  # 2초 대기
-        logger.info("✅ 대기 완료")
-        logger.info("")
+        if not is_local_mode:
+            # 스윕 생성 직후 WandB 서버에 완전히 반영되기까지 잠시 대기
+            # (특히 nohup 등 비동기 환경에서 타이밍 이슈 방지)
+            logger.info("")
+            logger.info("⏳ WandB 서버에 스윕이 완전히 반영되기를 기다리는 중... (2초)")
+            time.sleep(2)  # 2초 대기
+            logger.info("✅ 대기 완료")
+            logger.info("")
         logger.info("에이전트를 시작합니다...")
         logger.info("")
         
@@ -292,6 +499,7 @@ def _run_sweep_impl(
             timezone=timezone_config,
             wandb_project=wandb_project,
             wandb_entity=wandb_entity,
+            config_path=config_path,
         )
     else:
         logger.info("")
@@ -346,7 +554,7 @@ def sweep_smoke_command(
     logger.info("")
     
     try:
-        _run_sweep_impl(config_path, smoke_test=True, run_agent=run_agent)
+        _run_sweep_impl(config_path, smoke_test=True, run_agent=run_agent, force_local=False)
     except Exception as e:
         logger.error(f"스윕 시작 실패: {e}")
         raise typer.Exit(1)
@@ -411,7 +619,7 @@ def sweep_main(
     logger.info("")
     
     try:
-        _run_sweep_impl(config_path, smoke_test=False, run_agent=run_agent)
+        _run_sweep_impl(config_path, smoke_test=False, run_agent=run_agent, force_local=False)
     except Exception as e:
         logger.error(f"스윕 시작 실패: {e}")
         raise typer.Exit(1)
@@ -720,6 +928,11 @@ def sweep_preset(
         "--run-agent/--no-run-agent",
         help="스윕 생성 후 에이전트 자동 실행 (기본값: True)",
     ),
+    local: bool = typer.Option(
+        False,
+        "--local/--no-local",
+        help="로컬 모드 강제 활성화 (네트워크 연결 없이 실행, 기본값: False)",
+    ),
 ):
     """
     넉넉한 범위의 WandB Sweep 설정 파일을 생성하고 바로 실행합니다.
@@ -793,7 +1006,7 @@ def sweep_preset(
         logger.info("=" * 80)
         logger.info("")
         try:
-            _run_sweep_impl(output_path, smoke_test=False, run_agent=run_agent)
+            _run_sweep_impl(output_path, smoke_test=False, run_agent=run_agent, force_local=local)
         except Exception as e:
             logger.error(f"스윕 시작 실패: {e}")
             raise typer.Exit(1)
@@ -955,6 +1168,7 @@ def _run_agent_impl(
     timezone: str = "Asia/Seoul",
     wandb_project: Optional[str] = None,
     wandb_entity: Optional[str] = None,
+    config_path: Optional[Path] = None,
 ):
     """에이전트 실행 내부 구현 함수"""
     try:
@@ -1405,19 +1619,115 @@ def _run_agent_impl(
                 except Exception as api_error:
                     logger.debug(f"WandB API 확인 중 에러 (무시하고 계속 진행): {api_error}")
             
-            # wandb.agent() 호출
-            # time_window가 설정된 경우, 각 run 시작 전에 시간을 체크하기 위해 count=1로 설정
-            # 이렇게 하면 각 run이 끝난 후 time_window를 체크할 수 있음
-            agent_count = 1 if time_window else count  # time_window가 있으면 한 번에 하나씩만 실행
+            # 로컬 모드 확인 (sweep_id가 local-으로 시작하면 로컬 모드)
+            is_local_mode = actual_sweep_id.startswith("local-")
             
-            try:
-                logger.info(f"🔄 wandb.agent() 호출 중...")
-                logger.info(f"   sweep_id: {actual_sweep_id}")
-                logger.info(f"   count: {agent_count}")
-                logger.info(f"   kwargs: {agent_kwargs}")
-                wandb.agent(actual_sweep_id, function=train_fn, count=agent_count, **agent_kwargs)
-            except Exception as e:
-                error_msg = str(e).lower()
+            if is_local_mode:
+                # 로컬 모드: 설정 파일에서 파라미터 읽어서 로컬 루프로 실행
+                logger.info("💾 로컬 모드로 실행합니다 (네트워크 연결 없음)")
+                logger.info("")
+                
+                # 설정 파일 경로 확인
+                if not config_path:
+                    config_path = Path("configs/sweep.yaml")
+                
+                if config_path and config_path.exists():
+                    sweep_config = OmegaConf.load(config_path)
+                    parameters = _convert_to_dict(sweep_config.get("parameters", {}))
+                    fixed_params = _convert_to_dict(sweep_config.get("fixed", {}))
+                    
+                    # fixed 파라미터를 parameters에 추가
+                    for key, value in fixed_params.items():
+                        if key not in parameters:
+                            parameters[key] = {"value": _convert_to_dict(value)}
+                    
+                    metric_cfg = _convert_to_dict(sweep_config.get("metric", {}))
+                    metric_name = metric_cfg.get("name", "eval/recall_at_10")
+                    goal = str(metric_cfg.get("goal", "maximize")).lower()
+                    param_space = _build_param_space(parameters)
+                    fixed_params = {
+                        k: _convert_to_dict(v.get("value"))
+                        for k, v in parameters.items()
+                        if isinstance(v, dict) and "value" in v
+                    }
+                    n_initial = 5
+                    history = []
+
+                    logger.info(f"로컬 파라미터 샘플링 시작 (파라미터 수: {len(parameters)}, Bayes n_initial={n_initial})")
+                    
+                    # 로컬 루프로 실행
+                    agent_count = count if count else 999999  # count가 없으면 무제한
+                    run_count = 0
+                    
+                    def run_one_and_return_metric(full_params: dict, metric_key: str):
+                        # 로컬 모드에서는 WANDB_API_KEY를 무시하고 항상 offline
+                        init_kwargs = {"mode": "offline", "config": full_params, "project": wandb_project}
+                        if wandb_entity:
+                            init_kwargs["entity"] = wandb_entity
+                        wandb.init(**init_kwargs)
+                        train_fn()
+                        metric_val = None
+                        if wandb.run and getattr(wandb.run, "summary", None):
+                            try:
+                                s = dict(wandb.run.summary)
+                                metric_val = s.get(metric_key) or s.get(metric_key.replace("_at_", "@"))
+                            except Exception:
+                                pass
+                        wandb.finish()
+                        return metric_val
+                    
+                    while run_count < agent_count:
+                        # time_window 체크
+                        if time_window:
+                            in_window, next_start_time = _check_time_window(time_window, timezone)
+                            if not in_window:
+                                logger.info(f"⏸️  시간 제한 밖입니다. {next_start_time}까지 대기합니다...")
+                                if next_start_time:
+                                    wait_seconds = (next_start_time - datetime.now()).total_seconds()
+                                    if wait_seconds > 0:
+                                        time.sleep(min(wait_seconds, 3600))  # 최대 1시간 대기
+                                continue
+                        
+                        # 파라미터 샘플링: 초반 n_initial은 random, 이후 Bayes(EI) 추천
+                        suggested = _suggest_next_bayes(
+                            parameters, param_space, history, goal,
+                            n_initial=n_initial, n_candidates=200,
+                        )
+                        full_params = {**fixed_params, **suggested}
+                        
+                        try:
+                            metric_val = run_one_and_return_metric(full_params, metric_name)
+                            if metric_val is not None:
+                                history.append((full_params, float(metric_val)))
+                            else:
+                                bad = float("-inf") if goal == "maximize" else float("inf")
+                                history.append((full_params, bad))
+                            run_count += 1
+                        except KeyboardInterrupt:
+                            logger.info("사용자에 의해 중단되었습니다.")
+                            break
+                        except Exception as e:
+                            logger.error(f"Run 실패: {e}")
+                            continue
+                    
+                    logger.info(f"로컬 모드 실행 완료 (총 {run_count} runs)")
+                else:
+                    logger.error(f"로컬 모드: 설정 파일을 찾을 수 없습니다: {config_path}")
+                    raise typer.Exit(1)
+            else:
+                # 일반 모드: wandb.agent() 호출
+                # time_window가 설정된 경우, 각 run 시작 전에 시간을 체크하기 위해 count=1로 설정
+                # 이렇게 하면 각 run이 끝난 후 time_window를 체크할 수 있음
+                agent_count = 1 if time_window else count  # time_window가 있으면 한 번에 하나씩만 실행
+                
+                try:
+                    logger.info(f"🔄 wandb.agent() 호출 중...")
+                    logger.info(f"   sweep_id: {actual_sweep_id}")
+                    logger.info(f"   count: {agent_count}")
+                    logger.info(f"   kwargs: {agent_kwargs}")
+                    wandb.agent(actual_sweep_id, function=train_fn, count=agent_count, **agent_kwargs)
+                except Exception as e:
+                    error_msg = str(e).lower()
                 is_404 = "404" in error_msg or "not found" in error_msg or "agent not found" in error_msg
                 
                 logger.error("=" * 80)
@@ -1751,12 +2061,13 @@ def sweep_agent(
     
     # _run_agent_impl 호출
     _run_agent_impl(
-        sweep_id=sweep_id, 
-        count=count, 
-        time_window=time_window_tuple, 
+        sweep_id=sweep_id,
+        count=count,
+        time_window=time_window_tuple,
         timezone=timezone,
         wandb_project=wandb_project,
         wandb_entity=wandb_entity,
+        config_path=config_path,
     )
 
 
